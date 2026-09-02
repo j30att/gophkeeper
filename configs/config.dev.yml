@@ -1,0 +1,9 @@
+server:
+  address: ":8080"
+
+postgres:
+  dsn: "postgres://gophkeeper:gophkeeper@localhost:5432/gophkeeper?sslmode=disable"
+
+auth:
+  jwt_secret: "dev-secret-change-me"
+  access_token_ttl: "24h"
