@@ -34,11 +34,11 @@ compose-down:
 
 .PHONY: migrate-up
 migrate-up:
-	migrate -path migrations -database "$${GOPHKEEPER_POSTGRES_DSN:-postgres://gophkeeper:gophkeeper@localhost:5432/gophkeeper?sslmode=disable}" up
+	docker compose exec -T postgres psql -U gophkeeper -d gophkeeper -f /dev/stdin < migrations/000001_create_users.up.sql
 
 .PHONY: migrate-down
 migrate-down:
-	migrate -path migrations -database "$${GOPHKEEPER_POSTGRES_DSN:-postgres://gophkeeper:gophkeeper@localhost:5432/gophkeeper?sslmode=disable}" down
+	docker compose exec -T postgres psql -U gophkeeper -d gophkeeper -f /dev/stdin < migrations/000001_create_users.down.sql
 
 .PHONY: generate-api
 generate-api:
