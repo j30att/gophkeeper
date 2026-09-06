@@ -18,23 +18,20 @@ import (
 	appcrypto "github.com/igor/gophkeeper/internal/crypto"
 	"github.com/igor/gophkeeper/internal/middleware"
 	"github.com/igor/gophkeeper/internal/modules/auth/domain"
-	loginhandler "github.com/igor/gophkeeper/internal/modules/auth/handlers/login"
-	registerhandler "github.com/igor/gophkeeper/internal/modules/auth/handlers/register"
+	authhandlers "github.com/igor/gophkeeper/internal/modules/auth/handlers"
 	"github.com/igor/gophkeeper/internal/modules/auth/password"
 	authpostgres "github.com/igor/gophkeeper/internal/modules/auth/repositories/postgres"
 	"github.com/igor/gophkeeper/internal/modules/auth/token"
 	"github.com/igor/gophkeeper/internal/modules/auth/usecases"
+	infrahandlers "github.com/igor/gophkeeper/internal/modules/infra/handlers"
 	secretsdomain "github.com/igor/gophkeeper/internal/modules/secrets/domain"
-	secretscreate "github.com/igor/gophkeeper/internal/modules/secrets/handlers/create"
-	secretscreateblob "github.com/igor/gophkeeper/internal/modules/secrets/handlers/createblob"
-	secretsdelete "github.com/igor/gophkeeper/internal/modules/secrets/handlers/delete"
-	secretsget "github.com/igor/gophkeeper/internal/modules/secrets/handlers/get"
-	secretsgetcontent "github.com/igor/gophkeeper/internal/modules/secrets/handlers/getcontent"
-	secretslist "github.com/igor/gophkeeper/internal/modules/secrets/handlers/list"
-	secretsupdate "github.com/igor/gophkeeper/internal/modules/secrets/handlers/update"
+	secretshandlers "github.com/igor/gophkeeper/internal/modules/secrets/handlers"
 	secretspostgres "github.com/igor/gophkeeper/internal/modules/secrets/repositories/postgres"
 	secretsusecases "github.com/igor/gophkeeper/internal/modules/secrets/usecases"
 	"github.com/igor/gophkeeper/internal/storage/filesystem"
+	authapi "github.com/igor/gophkeeper/pkg/api/generated/auth"
+	infraapi "github.com/igor/gophkeeper/pkg/api/generated/infra"
+	secretsapi "github.com/igor/gophkeeper/pkg/api/generated/secrets"
 )
 
 // UserRepository сохраняет и загружает пользователей.
@@ -102,11 +99,7 @@ func BuildRouter(
 		return nil, fmt.Errorf("%w: secretsRepository", secretsusecases.ErrEmptyDependency)
 	}
 	router := chi.NewRouter()
-	router.Get("/", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
+	infraapi.HandlerFromMux(infraapi.NewStrictHandler(infrahandlers.New(), nil), router)
 
 	passwordHasher := password.NewBcryptHasher()
 	tokenIssuer := token.NewJWTIssuer(cfg.Auth.JWTSecret, cfg.Auth.AccessTokenTTL)
@@ -129,17 +122,11 @@ func BuildRouter(
 		return nil, fmt.Errorf("create login use case: %w", err)
 	}
 
-	registerHandler, err := registerhandler.New(logger, registerUseCase, validate)
+	authHandler, err := authhandlers.New(logger, registerUseCase, loginUseCase, validate)
 	if err != nil {
-		return nil, fmt.Errorf("create register handler: %w", err)
+		return nil, fmt.Errorf("create auth handler: %w", err)
 	}
-	loginHandler, err := loginhandler.New(logger, loginUseCase, validate)
-	if err != nil {
-		return nil, fmt.Errorf("create login handler: %w", err)
-	}
-
-	router.Post("/api/v1/auth/register", registerHandler.ServeHTTP)
-	router.Post("/api/v1/auth/login", loginHandler.ServeHTTP)
+	authapi.HandlerFromMux(authapi.NewStrictHandler(authHandler, nil), router)
 
 	createSecretUseCase, err := secretsusecases.NewCreateUseCase(secretsRepository, encryptor)
 	if err != nil {
@@ -170,44 +157,23 @@ func BuildRouter(
 		return nil, fmt.Errorf("create blob content use case: %w", err)
 	}
 
-	createSecretHandler, err := secretscreate.New(logger, createSecretUseCase, validate)
+	secretsHandler, err := secretshandlers.New(
+		logger,
+		createSecretUseCase,
+		listSecretUseCase,
+		getSecretUseCase,
+		updateSecretUseCase,
+		deleteSecretUseCase,
+		createBlobUseCase,
+		getBlobContentUseCase,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("create secret create handler: %w", err)
-	}
-	listSecretHandler, err := secretslist.New(logger, listSecretUseCase)
-	if err != nil {
-		return nil, fmt.Errorf("create secret list handler: %w", err)
-	}
-	getSecretHandler, err := secretsget.New(logger, getSecretUseCase)
-	if err != nil {
-		return nil, fmt.Errorf("create secret get handler: %w", err)
-	}
-	updateSecretHandler, err := secretsupdate.New(logger, updateSecretUseCase, validate)
-	if err != nil {
-		return nil, fmt.Errorf("create secret update handler: %w", err)
-	}
-	deleteSecretHandler, err := secretsdelete.New(logger, deleteSecretUseCase)
-	if err != nil {
-		return nil, fmt.Errorf("create secret delete handler: %w", err)
-	}
-	createBlobHandler, err := secretscreateblob.New(logger, createBlobUseCase, validate)
-	if err != nil {
-		return nil, fmt.Errorf("create blob secret handler: %w", err)
-	}
-	getBlobContentHandler, err := secretsgetcontent.New(logger, getBlobContentUseCase)
-	if err != nil {
-		return nil, fmt.Errorf("create blob content handler: %w", err)
+		return nil, fmt.Errorf("create secrets handler: %w", err)
 	}
 
 	router.Group(func(protected chi.Router) {
 		protected.Use(middleware.Auth(tokenIssuer))
-		protected.Post("/api/v1/secrets", createSecretHandler.ServeHTTP)
-		protected.Post("/api/v1/secrets/blob", createBlobHandler.ServeHTTP)
-		protected.Get("/api/v1/secrets", listSecretHandler.ServeHTTP)
-		protected.Get("/api/v1/secrets/{id}", getSecretHandler.ServeHTTP)
-		protected.Get("/api/v1/secrets/{id}/content", getBlobContentHandler.ServeHTTP)
-		protected.Put("/api/v1/secrets/{id}", updateSecretHandler.ServeHTTP)
-		protected.Delete("/api/v1/secrets/{id}", deleteSecretHandler.ServeHTTP)
+		secretsapi.HandlerFromMux(secretsapi.NewStrictHandler(secretsHandler, nil), protected)
 	})
 
 	return router, nil
