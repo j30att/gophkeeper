@@ -5,6 +5,8 @@ BINARY_SERVER=gophkeeper-server
 VERSION ?= 0.0.1
 BUILD_DATE = $(shell date -u '+%Y-%m-%d_%H:%M:%S')
 LDFLAGS = -ldflags "-X main.version=$(VERSION)"
+API_SPEC = $(shell pwd)/api/openapi.yml
+GENERATED_DIR = $(shell pwd)/pkg/api/generated
 
 .PHONY: fmt
 fmt:
@@ -44,5 +46,7 @@ migrate-down:
 
 .PHONY: generate-api
 generate-api:
-	mkdir -p pkg/api/generated/auth
-	oapi-codegen -config api/configs/auth.yml api/openapi.yml > pkg/api/generated/auth/auth.gen.go
+	mkdir -p $(GENERATED_DIR)/infra $(GENERATED_DIR)/auth $(GENERATED_DIR)/secrets
+	oapi-codegen -config api/configs/infra.yml $(API_SPEC) > $(GENERATED_DIR)/infra/infra.gen.go
+	oapi-codegen -config api/configs/auth.yml $(API_SPEC) > $(GENERATED_DIR)/auth/auth.gen.go
+	oapi-codegen -config api/configs/secrets.yml $(API_SPEC) > $(GENERATED_DIR)/secrets/secrets.gen.go
