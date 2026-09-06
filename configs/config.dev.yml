@@ -7,3 +7,9 @@ postgres:
 auth:
   jwt_secret: "dev-secret-change-me"
   access_token_ttl: "24h"
+
+crypto:
+  master_key: "dev-crypto-key-change-me"
+
+storage:
+  blob_path: "storage/blobs"

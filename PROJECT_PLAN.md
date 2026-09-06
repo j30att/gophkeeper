@@ -539,6 +539,35 @@ Postgres берем как основной storage для пользовате�
 - Реализовать optimistic lock через `version`.
 - Покрыть unit-тестами.
 
+Текущий MVP JSON CRUD:
+
+- реализованы structured-типы `credentials` и `card`;
+- добавлены endpoints `POST/GET/PUT/DELETE /api/v1/secrets` и `GET /api/v1/secrets/{id}`;
+- `metadata` и `payload` валидируются как JSON;
+- `metadata` и `payload` шифруются на сервере через AES-GCM;
+- nonce хранится рядом с encrypted bytes в таблице `secrets`;
+- доступ к секретам защищен JWT middleware;
+- удаление сделано как soft delete через `deleted_at`;
+- unit-тесты и smoke-проверка через реальный Postgres проходят.
+
+Текущий MVP blob-секретов:
+
+- реализованы типы `text` и `binary`;
+- загрузка идет через `POST /api/v1/secrets/blob` в формате `multipart/form-data`;
+- скачивание идет через `GET /api/v1/secrets/{id}/content` stream-ответом;
+- содержимое файла не кладется в Postgres, а сохраняется в локальное blob storage;
+- в Postgres хранится доменная запись `secrets` и мета файла в `blobs`;
+- содержимое blob-файла шифруется потоково чанками через AES-GCM;
+- размер и `checksum_sha256` считаются по исходному plaintext;
+- локальный путь storage задается через `GOPHKEEPER_BLOB_STORAGE_PATH`;
+- unit-тесты и smoke-проверка upload/download через реальный Postgres проходят.
+
+Что осталось по blob-секретам:
+
+- реализовать замену содержимого через `PUT /api/v1/secrets/{id}/content`;
+- решить стратегию уборки старых blob-файлов после update/delete;
+- добавить интеграционные тесты с реальным Postgres и файловым storage.
+
 ### Этап 4. Sync MVP
 
 - Уточнить контракт sync.
@@ -577,10 +606,10 @@ Postgres берем как основной storage для пользовате�
 - OpenAPI + `oapi-codegen` strict-server;
 - Postgres + `pgx`;
 - `docker-compose.yml` с Postgres для локальной разработки;
-- migrations через `golang-migrate`;
+- migrations в локальном MVP применяем через `docker compose exec ... psql`;
 - auth через JWT;
 - refresh token в MVP не делаем;
-- password hash через `argon2id`;
+- password hash через `bcrypt`;
 - payload, metadata и blob-файлы шифруем AES-GCM на сервере в MVP;
 - AES-256 key получаем через SHA-256 от строки из config/env;
 - `text` и `binary` храним как blob-файлы с метаданными в таблице `blobs`;

@@ -35,9 +35,11 @@ compose-down:
 .PHONY: migrate-up
 migrate-up:
 	docker compose exec -T postgres psql -U gophkeeper -d gophkeeper -f /dev/stdin < migrations/000001_create_users.up.sql
+	docker compose exec -T postgres psql -U gophkeeper -d gophkeeper -f /dev/stdin < migrations/000002_create_secrets.up.sql
 
 .PHONY: migrate-down
 migrate-down:
+	docker compose exec -T postgres psql -U gophkeeper -d gophkeeper -f /dev/stdin < migrations/000002_create_secrets.down.sql
 	docker compose exec -T postgres psql -U gophkeeper -d gophkeeper -f /dev/stdin < migrations/000001_create_users.down.sql
 
 .PHONY: generate-api
