@@ -10,17 +10,22 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/igor/gophkeeper/internal/config"
+	authdomain "github.com/igor/gophkeeper/internal/modules/auth/domain"
+	authusecases "github.com/igor/gophkeeper/internal/modules/auth/usecases"
+	secretsdomain "github.com/igor/gophkeeper/internal/modules/secrets/domain"
+	secretsusecases "github.com/igor/gophkeeper/internal/modules/secrets/usecases"
 )
 
 func TestBuildRouter(t *testing.T) {
 	t.Run(
 		"Должен создать router и вернуть health check", func(t *testing.T) {
-			router, err := BuildInMemoryRouter(zerolog.Nop())
+			router, err := BuildRouter(zerolog.Nop(), testConfig(t), newTestUserRepository(), testSecretsRepository{})
 			require.NoError(t, err)
 
 			request := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -35,7 +40,7 @@ func TestBuildRouter(t *testing.T) {
 
 	t.Run(
 		"Должен зарегистрировать пользователя и выполнить login", func(t *testing.T) {
-			router, err := BuildInMemoryRouter(zerolog.Nop())
+			router, err := BuildRouter(zerolog.Nop(), testConfig(t), newTestUserRepository(), testSecretsRepository{})
 			require.NoError(t, err)
 
 			registerRecorder := httptest.NewRecorder()
@@ -66,11 +71,74 @@ func TestBuildRouter(t *testing.T) {
 
 	t.Run(
 		"Должен вернуть ошибку без user repository", func(t *testing.T) {
-			_, err := BuildRouter(zerolog.Nop(), testConfig(), nil)
+			_, err := BuildRouter(zerolog.Nop(), testConfig(t), nil, testSecretsRepository{})
 
 			require.Error(t, err)
 		},
 	)
+
+	t.Run(
+		"Должен вернуть ошибку без secrets repository", func(t *testing.T) {
+			_, err := BuildRouter(zerolog.Nop(), testConfig(t), newTestUserRepository(), nil)
+
+			require.Error(t, err)
+		},
+	)
+}
+
+type testUserRepository struct {
+	byLogin map[string]authdomain.User
+}
+
+func newTestUserRepository() *testUserRepository {
+	return &testUserRepository{byLogin: make(map[string]authdomain.User)}
+}
+
+func (r *testUserRepository) Save(_ context.Context, user authdomain.User) error {
+	r.byLogin[user.Login] = user
+	return nil
+}
+
+func (r *testUserRepository) Load(_ context.Context, login string) (authdomain.User, error) {
+	user, ok := r.byLogin[login]
+	if !ok {
+		return authdomain.User{}, authusecases.ErrUserNotFound
+	}
+	return user, nil
+}
+
+type testSecretsRepository struct{}
+
+func (testSecretsRepository) Save(_ context.Context, _ secretsdomain.Secret) error {
+	return nil
+}
+
+func (testSecretsRepository) Load(_ context.Context, _ uuid.UUID, _ uuid.UUID) (secretsdomain.Secret, error) {
+	return secretsdomain.Secret{}, secretsusecases.ErrSecretNotFound
+}
+
+func (testSecretsRepository) List(_ context.Context, _ uuid.UUID) ([]secretsdomain.Secret, error) {
+	return nil, nil
+}
+
+func (testSecretsRepository) Update(_ context.Context, _ secretsdomain.Secret) error {
+	return secretsusecases.ErrSecretNotFound
+}
+
+func (testSecretsRepository) Delete(_ context.Context, _ uuid.UUID, _ uuid.UUID) error {
+	return secretsusecases.ErrSecretNotFound
+}
+
+func (testSecretsRepository) SaveBlob(_ context.Context, _ secretsdomain.Blob) error {
+	return nil
+}
+
+func (testSecretsRepository) LoadBlobBySecret(
+	_ context.Context,
+	_ uuid.UUID,
+	_ uuid.UUID,
+) (secretsdomain.Blob, error) {
+	return secretsdomain.Blob{}, secretsusecases.ErrBlobNotFound
 }
 
 func TestRunHTTPServer(t *testing.T) {
@@ -169,12 +237,17 @@ func newBootstrapJSONRequest(t *testing.T, path string, body any) *http.Request 
 	return request
 }
 
-func testConfig() config.Config {
+func testConfig(t *testing.T) config.Config {
+	t.Helper()
 	return config.Config{
 		Server: config.Server{Address: ":8080"},
 		Auth: config.Auth{
 			JWTSecret:      "secret",
 			AccessTokenTTL: time.Hour,
+		},
+		Crypto: config.Crypto{MasterKey: "secret"},
+		Storage: config.Storage{
+			BlobPath: t.TempDir(),
 		},
 	}
 }

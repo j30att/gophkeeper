@@ -85,8 +85,268 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/secrets:
+    post:
+      tags: ["secrets"]
+      summary: Create JSON secret
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SecretRequest"
+      responses:
+        "201":
+          description: Secret created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecretResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    get:
+      tags: ["secrets"]
+      summary: List JSON secrets
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Secrets returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecretListResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/secrets/blob:
+    post:
+      tags: ["secrets"]
+      summary: Create blob secret
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - type
+                - name
+                - file
+              properties:
+                type:
+                  $ref: "#/components/schemas/BlobSecretType"
+                name:
+                  type: string
+                  minLength: 1
+                metadata:
+                  type: string
+                  description: JSON string with user metadata
+                  example: '{"site":"example.com"}'
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "201":
+          description: Blob secret created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecretResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/secrets/{id}:
+    get:
+      tags: ["secrets"]
+      summary: Get secret metadata
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SecretID"
+      responses:
+        "200":
+          description: Secret returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecretResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Secret not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      tags: ["secrets"]
+      summary: Update JSON secret
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SecretID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SecretRequest"
+      responses:
+        "200":
+          description: Secret updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecretResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Secret not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags: ["secrets"]
+      summary: Delete secret
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SecretID"
+      responses:
+        "204":
+          description: Secret deleted
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Secret not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/secrets/{id}/content:
+    get:
+      tags: ["secrets"]
+      summary: Download blob secret content
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SecretID"
+      responses:
+        "200":
+          description: Blob content returned
+          headers:
+            X-Checksum-SHA256:
+              schema:
+                type: string
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Blob not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
 components:
+  parameters:
+    SecretID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
   securitySchemes:
     bearerAuth:
       type: http
@@ -125,6 +385,147 @@ components:
       properties:
         token:
           type: string
+    SecretType:
+      type: string
+      enum:
+        - credentials
+        - card
+        - text
+        - binary
+    StructuredSecretType:
+      type: string
+      enum:
+        - credentials
+        - card
+    BlobSecretType:
+      type: string
+      enum:
+        - text
+        - binary
+    SecretRequest:
+      type: object
+      required:
+        - type
+        - name
+        - payload
+      properties:
+        type:
+          $ref: "#/components/schemas/StructuredSecretType"
+        name:
+          type: string
+          minLength: 1
+        metadata:
+          type: object
+          additionalProperties: true
+        payload:
+          type: object
+          additionalProperties: true
+    Blob:
+      type: object
+      required:
+        - id
+        - original_name
+        - content_type
+        - size
+        - checksum_sha256
+      properties:
+        id:
+          type: string
+          format: uuid
+        original_name:
+          type: string
+        content_type:
+          type: string
+        size:
+          type: integer
+          format: int64
+        checksum_sha256:
+          type: string
+    Secret:
+      type: object
+      required:
+        - id
+        - user_id
+        - type
+        - name
+        - metadata
+        - version
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        type:
+          $ref: "#/components/schemas/SecretType"
+        name:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+        payload:
+          type: object
+          additionalProperties: true
+        blob:
+          $ref: "#/components/schemas/Blob"
+        version:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    SecretListItem:
+      type: object
+      required:
+        - id
+        - type
+        - name
+        - metadata
+        - version
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          $ref: "#/components/schemas/SecretType"
+        name:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+        blob:
+          $ref: "#/components/schemas/Blob"
+        version:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    SecretResponse:
+      type: object
+      required:
+        - secret
+      properties:
+        secret:
+          $ref: "#/components/schemas/Secret"
+    SecretListResponse:
+      type: object
+      required:
+        - secrets
+      properties:
+        secrets:
+          type: array
+          items:
+            $ref: "#/components/schemas/SecretListItem"
     ErrorResponse:
       type: object
       required:

@@ -14,6 +14,8 @@ func TestLoad(t *testing.T) {
 			t.Setenv("GOPHKEEPER_POSTGRES_DSN", "")
 			t.Setenv("GOPHKEEPER_JWT_SECRET", "")
 			t.Setenv("GOPHKEEPER_ACCESS_TOKEN_TTL", "")
+			t.Setenv("GOPHKEEPER_CRYPTO_MASTER_KEY", "")
+			t.Setenv("GOPHKEEPER_BLOB_STORAGE_PATH", "")
 
 			cfg := Load()
 
@@ -21,6 +23,8 @@ func TestLoad(t *testing.T) {
 			assert.Equal(t, defaultPostgresDSN, cfg.Postgres.DSN)
 			assert.Equal(t, defaultJWTSecret, cfg.Auth.JWTSecret)
 			assert.Equal(t, defaultTokenTTL, cfg.Auth.AccessTokenTTL)
+			assert.Equal(t, defaultCryptoKey, cfg.Crypto.MasterKey)
+			assert.Equal(t, defaultBlobStorage, cfg.Storage.BlobPath)
 		},
 	)
 
@@ -30,6 +34,8 @@ func TestLoad(t *testing.T) {
 			t.Setenv("GOPHKEEPER_POSTGRES_DSN", "postgres://custom")
 			t.Setenv("GOPHKEEPER_JWT_SECRET", "secret")
 			t.Setenv("GOPHKEEPER_ACCESS_TOKEN_TTL", "2h")
+			t.Setenv("GOPHKEEPER_CRYPTO_MASTER_KEY", "crypto-secret")
+			t.Setenv("GOPHKEEPER_BLOB_STORAGE_PATH", "/tmp/gophkeeper-blobs")
 
 			cfg := Load()
 
@@ -37,6 +43,8 @@ func TestLoad(t *testing.T) {
 			assert.Equal(t, "postgres://custom", cfg.Postgres.DSN)
 			assert.Equal(t, "secret", cfg.Auth.JWTSecret)
 			assert.Equal(t, 2*time.Hour, cfg.Auth.AccessTokenTTL)
+			assert.Equal(t, "crypto-secret", cfg.Crypto.MasterKey)
+			assert.Equal(t, "/tmp/gophkeeper-blobs", cfg.Storage.BlobPath)
 		},
 	)
 

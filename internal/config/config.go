@@ -10,6 +10,8 @@ const (
 	defaultServerAddress = ":8080"
 	defaultPostgresDSN   = "postgres://gophkeeper:gophkeeper@localhost:5432/gophkeeper?sslmode=disable"
 	defaultJWTSecret     = "dev-secret-change-me"
+	defaultCryptoKey     = "dev-crypto-key-change-me"
+	defaultBlobStorage   = "storage/blobs"
 	defaultTokenTTL      = 24 * time.Hour
 )
 
@@ -18,6 +20,8 @@ type Config struct {
 	Server   Server
 	Postgres Postgres
 	Auth     Auth
+	Crypto   Crypto
+	Storage  Storage
 }
 
 // Server описывает HTTP-конфигурацию сервера.
@@ -36,6 +40,16 @@ type Auth struct {
 	AccessTokenTTL time.Duration
 }
 
+// Crypto описывает конфигурацию шифрования.
+type Crypto struct {
+	MasterKey string
+}
+
+// Storage описывает конфигурацию локального blob-хранилища.
+type Storage struct {
+	BlobPath string
+}
+
 // Load загружает конфигурацию из environment variables с dev-значениями по умолчанию.
 func Load() Config {
 	return Config{
@@ -48,6 +62,12 @@ func Load() Config {
 		Auth: Auth{
 			JWTSecret:      stringFromEnv("GOPHKEEPER_JWT_SECRET", defaultJWTSecret),
 			AccessTokenTTL: durationFromEnv("GOPHKEEPER_ACCESS_TOKEN_TTL", defaultTokenTTL),
+		},
+		Crypto: Crypto{
+			MasterKey: stringFromEnv("GOPHKEEPER_CRYPTO_MASTER_KEY", defaultCryptoKey),
+		},
+		Storage: Storage{
+			BlobPath: stringFromEnv("GOPHKEEPER_BLOB_STORAGE_PATH", defaultBlobStorage),
 		},
 	}
 }
