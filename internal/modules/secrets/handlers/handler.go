@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
@@ -53,16 +54,22 @@ type GetBlobContentUseCase interface {
 	Execute(ctx context.Context, userID uuid.UUID, secretID uuid.UUID) (usecases.BlobContentOutput, error)
 }
 
+// UpdateBlobContentUseCase заменяет содержимое blob-секрета.
+type UpdateBlobContentUseCase interface {
+	Execute(ctx context.Context, input usecases.BlobContentInput) (usecases.SecretOutput, error)
+}
+
 // Handler реализует generated secrets.StrictServerInterface.
 type Handler struct {
-	logger        zerolog.Logger
-	create        CreateUseCase
-	list          ListUseCase
-	get           GetUseCase
-	update        UpdateUseCase
-	delete        DeleteUseCase
-	createBlob    CreateBlobUseCase
-	getBlobStream GetBlobContentUseCase
+	logger            zerolog.Logger
+	create            CreateUseCase
+	list              ListUseCase
+	get               GetUseCase
+	update            UpdateUseCase
+	delete            DeleteUseCase
+	createBlob        CreateBlobUseCase
+	getBlobStream     GetBlobContentUseCase
+	updateBlobContent UpdateBlobContentUseCase
 }
 
 // New создает Handler.
@@ -75,6 +82,7 @@ func New(
 	delete DeleteUseCase,
 	createBlob CreateBlobUseCase,
 	getBlobStream GetBlobContentUseCase,
+	updateBlobContent UpdateBlobContentUseCase,
 ) (*Handler, error) {
 	if create == nil {
 		return nil, fmt.Errorf("%w: create", usecases.ErrEmptyDependency)
@@ -97,15 +105,19 @@ func New(
 	if getBlobStream == nil {
 		return nil, fmt.Errorf("%w: getBlobStream", usecases.ErrEmptyDependency)
 	}
+	if updateBlobContent == nil {
+		return nil, fmt.Errorf("%w: updateBlobContent", usecases.ErrEmptyDependency)
+	}
 	return &Handler{
-		logger:        logger,
-		create:        create,
-		list:          list,
-		get:           get,
-		update:        update,
-		delete:        delete,
-		createBlob:    createBlob,
-		getBlobStream: getBlobStream,
+		logger:            logger,
+		create:            create,
+		list:              list,
+		get:               get,
+		update:            update,
+		delete:            delete,
+		createBlob:        createBlob,
+		getBlobStream:     getBlobStream,
+		updateBlobContent: updateBlobContent,
 	}, nil
 }
 
@@ -235,6 +247,9 @@ func (h *Handler) PutApiV1SecretsId(
 	if request.Body == nil {
 		return secrets.PutApiV1SecretsId400JSONResponse(errorResponse("bad_request", "invalid request body")), nil
 	}
+	if request.Body.ExpectedVersion < 1 {
+		return secrets.PutApiV1SecretsId400JSONResponse(errorResponse("bad_request", "expected_version is required")), nil
+	}
 	metadata, err := mapToRawMessage(request.Body.Metadata)
 	if err != nil {
 		return secrets.PutApiV1SecretsId400JSONResponse(errorResponse("bad_request", "invalid metadata")), nil
@@ -247,12 +262,13 @@ func (h *Handler) PutApiV1SecretsId(
 	output, err := h.update.Execute(
 		ctx,
 		usecases.UpdateSecretInput{
-			UserID:   userID,
-			ID:       request.Id,
-			Type:     domain.SecretType(request.Body.Type),
-			Name:     request.Body.Name,
-			Metadata: metadata,
-			Payload:  payload,
+			UserID:          userID,
+			ID:              request.Id,
+			Type:            domain.SecretType(request.Body.Type),
+			Name:            request.Body.Name,
+			Metadata:        metadata,
+			Payload:         payload,
+			ExpectedVersion: request.Body.ExpectedVersion,
 		},
 	)
 	if err != nil {
@@ -287,6 +303,26 @@ func (h *Handler) GetApiV1SecretsIdContent(
 	}, nil
 }
 
+// PutApiV1SecretsIdContent заменяет содержимое blob-секрета.
+func (h *Handler) PutApiV1SecretsIdContent(
+	ctx context.Context,
+	request secrets.PutApiV1SecretsIdContentRequestObject,
+) (secrets.PutApiV1SecretsIdContentResponseObject, error) {
+	userID, ok := middleware.UserIDFromContext(ctx)
+	if !ok {
+		return secrets.PutApiV1SecretsIdContent401JSONResponse(errorResponse("unauthorized", "authorization required")), nil
+	}
+	input, err := readBlobContentMultipart(userID, request.Id, request.Body)
+	if err != nil {
+		return secrets.PutApiV1SecretsIdContent400JSONResponse(errorResponse("bad_request", err.Error())), nil
+	}
+	output, err := h.updateBlobContent.Execute(ctx, input)
+	if err != nil {
+		return h.updateBlobContentErrorResponse(err)
+	}
+	return secrets.PutApiV1SecretsIdContent200JSONResponse{Secret: toSecret(output)}, nil
+}
+
 func (h *Handler) createErrorResponse(err error) (secrets.PostApiV1SecretsResponseObject, error) {
 	if errors.Is(err, usecases.ErrInvalidSecretType) || errors.Is(err, usecases.ErrInvalidJSON) {
 		return secrets.PostApiV1Secrets400JSONResponse(errorResponse("validation_error", "request validation failed")), nil
@@ -308,11 +344,28 @@ func (h *Handler) updateErrorResponse(err error) (secrets.PutApiV1SecretsIdRespo
 	if errors.Is(err, usecases.ErrSecretNotFound) {
 		return secrets.PutApiV1SecretsId404JSONResponse(errorResponse("secret_not_found", "secret not found")), nil
 	}
+	if errors.Is(err, usecases.ErrSecretVersionConflict) {
+		return secrets.PutApiV1SecretsId409JSONResponse(errorResponse("version_conflict", "secret version conflict")), nil
+	}
 	if errors.Is(err, usecases.ErrInvalidSecretType) || errors.Is(err, usecases.ErrInvalidJSON) {
 		return secrets.PutApiV1SecretsId400JSONResponse(errorResponse("validation_error", "request validation failed")), nil
 	}
 	h.logger.Error().Err(err).Msg("update secret failed")
 	return nil, err
+}
+
+func (h *Handler) updateBlobContentErrorResponse(err error) (secrets.PutApiV1SecretsIdContentResponseObject, error) {
+	if errors.Is(err, usecases.ErrSecretNotFound) || errors.Is(err, usecases.ErrBlobNotFound) {
+		return secrets.PutApiV1SecretsIdContent404JSONResponse(errorResponse("blob_not_found", "blob not found")), nil
+	}
+	if errors.Is(err, usecases.ErrSecretVersionConflict) {
+		return secrets.PutApiV1SecretsIdContent409JSONResponse(errorResponse("version_conflict", "secret version conflict")), nil
+	}
+	if errors.Is(err, usecases.ErrInvalidSecretType) || errors.Is(err, usecases.ErrEmptyContent) {
+		return secrets.PutApiV1SecretsIdContent400JSONResponse(errorResponse("validation_error", "request validation failed")), nil
+	}
+	h.logger.Error().Err(err).Msg("update blob content failed")
+	return secrets.PutApiV1SecretsIdContent500JSONResponse(errorResponse("internal_error", "internal server error")), nil
 }
 
 func readBlobMultipart(userID uuid.UUID, reader *multipart.Reader) (usecases.BlobSecretInput, error) {
@@ -356,6 +409,45 @@ func readBlobMultipart(userID uuid.UUID, reader *multipart.Reader) (usecases.Blo
 		}
 	}
 	return usecases.BlobSecretInput{}, errors.New("file is required")
+}
+
+func readBlobContentMultipart(userID uuid.UUID, secretID uuid.UUID, reader *multipart.Reader) (usecases.BlobContentInput, error) {
+	if reader == nil {
+		return usecases.BlobContentInput{}, errors.New("invalid multipart body")
+	}
+	var input usecases.BlobContentInput
+	input.UserID = userID
+	input.ID = secretID
+	for {
+		part, err := reader.NextPart()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return usecases.BlobContentInput{}, fmt.Errorf("read multipart: %w", err)
+		}
+		switch part.FormName() {
+		case "expected_version":
+			value, err := io.ReadAll(part)
+			if err != nil {
+				return usecases.BlobContentInput{}, fmt.Errorf("read expected_version: %w", err)
+			}
+			expectedVersion, err := strconv.Atoi(string(value))
+			if err != nil {
+				return usecases.BlobContentInput{}, errors.New("expected_version must be integer")
+			}
+			input.ExpectedVersion = expectedVersion
+		case "file":
+			input.OriginalName = part.FileName()
+			input.ContentType = part.Header.Get("Content-Type")
+			input.Content = part
+			if input.ExpectedVersion < 1 {
+				return usecases.BlobContentInput{}, errors.New("expected_version is required")
+			}
+			return input, nil
+		}
+	}
+	return usecases.BlobContentInput{}, errors.New("file is required")
 }
 
 func mapToRawMessage(value *map[string]interface{}) (json.RawMessage, error) {

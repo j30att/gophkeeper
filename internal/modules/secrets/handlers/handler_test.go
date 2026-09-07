@@ -117,6 +117,22 @@ func (m *getBlobContentUseCaseMock) Execute(
 	return m.output, m.err
 }
 
+type updateBlobContentUseCaseMock struct {
+	output  usecases.SecretOutput
+	err     error
+	input   usecases.BlobContentInput
+	content string
+}
+
+func (m *updateBlobContentUseCaseMock) Execute(_ context.Context, input usecases.BlobContentInput) (usecases.SecretOutput, error) {
+	m.input = input
+	if input.Content != nil {
+		content, _ := io.ReadAll(input.Content)
+		m.content = string(content)
+	}
+	return m.output, m.err
+}
+
 type tokenValidatorMock struct {
 	claims authtoken.Claims
 	err    error
@@ -138,6 +154,7 @@ func TestHandlerNew(t *testing.T) {
 				&deleteUseCaseMock{},
 				&createBlobUseCaseMock{},
 				&getBlobContentUseCaseMock{},
+				&updateBlobContentUseCaseMock{},
 			)
 
 			require.NoError(t, err)
@@ -156,6 +173,7 @@ func TestHandlerNew(t *testing.T) {
 				&deleteUseCaseMock{},
 				&createBlobUseCaseMock{},
 				&getBlobContentUseCaseMock{},
+				&updateBlobContentUseCaseMock{},
 			)
 
 			require.Error(t, err)
@@ -183,7 +201,7 @@ func TestHandlerPostApiV1Secrets(t *testing.T) {
 					UpdatedAt: now,
 				},
 			}
-			router := newTestRouter(t, userID, createUseCase, nil, nil, nil, nil, nil, nil)
+			router := newTestRouter(t, userID, createUseCase, nil, nil, nil, nil, nil, nil, nil)
 			request := newJSONRequest(t, http.MethodPost, "/api/v1/secrets", map[string]any{
 				"type":     "credentials",
 				"name":     "github",
@@ -212,6 +230,7 @@ func TestHandlerPostApiV1Secrets(t *testing.T) {
 				t,
 				uuid.New(),
 				&createUseCaseMock{err: usecases.ErrInvalidSecretType},
+				nil,
 				nil,
 				nil,
 				nil,
@@ -258,7 +277,7 @@ func TestHandlerPostApiV1SecretsBlob(t *testing.T) {
 					},
 				},
 			}
-			router := newTestRouter(t, userID, nil, nil, nil, nil, nil, createBlobUseCase, nil)
+			router := newTestRouter(t, userID, nil, nil, nil, nil, nil, createBlobUseCase, nil, nil)
 			request := newMultipartRequest(t, "/api/v1/secrets/blob", map[string]string{
 				"type":     "text",
 				"name":     "note",
@@ -298,7 +317,7 @@ func TestHandlerGetApiV1Secrets(t *testing.T) {
 					},
 				},
 			}
-			router := newTestRouter(t, userID, nil, listUseCase, nil, nil, nil, nil, nil)
+			router := newTestRouter(t, userID, nil, listUseCase, nil, nil, nil, nil, nil, nil)
 			request := httptest.NewRequest(http.MethodGet, "/api/v1/secrets", nil)
 			request.Header.Set("Authorization", "Bearer token")
 			recorder := httptest.NewRecorder()
@@ -334,7 +353,7 @@ func TestHandlerGetApiV1SecretsId(t *testing.T) {
 					UpdatedAt: now,
 				},
 			}
-			router := newTestRouter(t, userID, nil, nil, getUseCase, nil, nil, nil, nil)
+			router := newTestRouter(t, userID, nil, nil, getUseCase, nil, nil, nil, nil, nil)
 			request := httptest.NewRequest(http.MethodGet, "/api/v1/secrets/"+secretID.String(), nil)
 			request.Header.Set("Authorization", "Bearer token")
 			recorder := httptest.NewRecorder()
@@ -355,6 +374,7 @@ func TestHandlerGetApiV1SecretsId(t *testing.T) {
 				nil,
 				nil,
 				&getUseCaseMock{err: usecases.ErrSecretNotFound},
+				nil,
 				nil,
 				nil,
 				nil,
@@ -390,11 +410,12 @@ func TestHandlerPutApiV1SecretsId(t *testing.T) {
 					UpdatedAt: now,
 				},
 			}
-			router := newTestRouter(t, userID, nil, nil, nil, updateUseCase, nil, nil, nil)
+			router := newTestRouter(t, userID, nil, nil, nil, updateUseCase, nil, nil, nil, nil)
 			request := newJSONRequest(t, http.MethodPut, "/api/v1/secrets/"+secretID.String(), map[string]any{
-				"type":    "card",
-				"name":    "card",
-				"payload": map[string]any{"number": "1234"},
+				"type":             "card",
+				"name":             "card",
+				"expected_version": 1,
+				"payload":          map[string]any{"number": "1234"},
 			})
 			recorder := httptest.NewRecorder()
 
@@ -404,6 +425,7 @@ func TestHandlerPutApiV1SecretsId(t *testing.T) {
 			assert.Equal(t, userID, updateUseCase.input.UserID)
 			assert.Equal(t, secretID, updateUseCase.input.ID)
 			assert.Equal(t, domain.SecretTypeCard, updateUseCase.input.Type)
+			assert.Equal(t, 1, updateUseCase.input.ExpectedVersion)
 			assert.JSONEq(t, `{"number":"1234"}`, string(updateUseCase.input.Payload))
 		},
 	)
@@ -415,7 +437,7 @@ func TestHandlerDeleteApiV1SecretsId(t *testing.T) {
 			userID := uuid.New()
 			secretID := uuid.New()
 			deleteUseCase := &deleteUseCaseMock{}
-			router := newTestRouter(t, userID, nil, nil, nil, nil, deleteUseCase, nil, nil)
+			router := newTestRouter(t, userID, nil, nil, nil, nil, deleteUseCase, nil, nil, nil)
 			request := httptest.NewRequest(http.MethodDelete, "/api/v1/secrets/"+secretID.String(), nil)
 			request.Header.Set("Authorization", "Bearer token")
 			recorder := httptest.NewRecorder()
@@ -443,7 +465,7 @@ func TestHandlerGetApiV1SecretsIdContent(t *testing.T) {
 					Content: io.NopCloser(bytes.NewBufferString("content")),
 				},
 			}
-			router := newTestRouter(t, userID, nil, nil, nil, nil, nil, nil, getBlobContentUseCase)
+			router := newTestRouter(t, userID, nil, nil, nil, nil, nil, nil, getBlobContentUseCase, nil)
 			request := httptest.NewRequest(http.MethodGet, "/api/v1/secrets/"+secretID.String()+"/content", nil)
 			request.Header.Set("Authorization", "Bearer token")
 			recorder := httptest.NewRecorder()
@@ -459,8 +481,80 @@ func TestHandlerGetApiV1SecretsIdContent(t *testing.T) {
 	)
 }
 
+func TestHandlerPutApiV1SecretsIdContent(t *testing.T) {
+	t.Run(
+		"Должен вернуть 200", func(t *testing.T) {
+			userID := uuid.New()
+			secretID := uuid.New()
+			now := time.Now().UTC()
+			updateBlobContentUseCase := &updateBlobContentUseCaseMock{
+				output: usecases.SecretOutput{
+					ID:        secretID,
+					UserID:    userID,
+					Type:      domain.SecretTypeText,
+					Name:      "note",
+					Metadata:  json.RawMessage(`{}`),
+					Payload:   json.RawMessage(`{}`),
+					Version:   2,
+					CreatedAt: now,
+					UpdatedAt: now,
+					Blob: &usecases.BlobOutput{
+						ID:             uuid.New(),
+						OriginalName:   "note.txt",
+						ContentType:    "text/plain",
+						Size:           11,
+						ChecksumSHA256: "checksum",
+					},
+				},
+			}
+			router := newTestRouter(t, userID, nil, nil, nil, nil, nil, nil, nil, updateBlobContentUseCase)
+			request := newMultipartRequest(t, "/api/v1/secrets/"+secretID.String()+"/content", map[string]string{
+				"expected_version": "1",
+			}, "file", "note.txt", "text/plain", "new content")
+			request.Method = http.MethodPut
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, request)
+
+			require.Equal(t, http.StatusOK, recorder.Code)
+			assert.Equal(t, userID, updateBlobContentUseCase.input.UserID)
+			assert.Equal(t, secretID, updateBlobContentUseCase.input.ID)
+			assert.Equal(t, 1, updateBlobContentUseCase.input.ExpectedVersion)
+			assert.Equal(t, "note.txt", updateBlobContentUseCase.input.OriginalName)
+			assert.Equal(t, "text/plain", updateBlobContentUseCase.input.ContentType)
+			assert.Equal(t, "new content", updateBlobContentUseCase.content)
+		},
+	)
+
+	t.Run(
+		"Должен вернуть 409", func(t *testing.T) {
+			router := newTestRouter(
+				t,
+				uuid.New(),
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+				&updateBlobContentUseCaseMock{err: usecases.ErrSecretVersionConflict},
+			)
+			request := newMultipartRequest(t, "/api/v1/secrets/"+uuid.NewString()+"/content", map[string]string{
+				"expected_version": "1",
+			}, "file", "note.txt", "text/plain", "new content")
+			request.Method = http.MethodPut
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, request)
+
+			require.Equal(t, http.StatusConflict, recorder.Code)
+		},
+	)
+}
+
 func TestHandlerUnauthorized(t *testing.T) {
-	router := newTestRouter(t, uuid.New(), nil, nil, nil, nil, nil, nil, nil)
+	router := newTestRouter(t, uuid.New(), nil, nil, nil, nil, nil, nil, nil, nil)
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/secrets", nil)
 	recorder := httptest.NewRecorder()
 
@@ -479,6 +573,7 @@ func newTestRouter(
 	deleteUseCase DeleteUseCase,
 	createBlobUseCase CreateBlobUseCase,
 	getBlobContentUseCase GetBlobContentUseCase,
+	updateBlobContentUseCase UpdateBlobContentUseCase,
 ) http.Handler {
 	t.Helper()
 	if createUseCase == nil {
@@ -502,6 +597,9 @@ func newTestRouter(
 	if getBlobContentUseCase == nil {
 		getBlobContentUseCase = &getBlobContentUseCaseMock{}
 	}
+	if updateBlobContentUseCase == nil {
+		updateBlobContentUseCase = &updateBlobContentUseCaseMock{}
+	}
 	handler, err := New(
 		zerolog.Nop(),
 		createUseCase,
@@ -511,6 +609,7 @@ func newTestRouter(
 		deleteUseCase,
 		createBlobUseCase,
 		getBlobContentUseCase,
+		updateBlobContentUseCase,
 	)
 	require.NoError(t, err)
 	router := chi.NewRouter()

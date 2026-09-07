@@ -19,3 +19,6 @@ var ErrInvalidJSON = errors.New("invalid json")
 
 // ErrEmptyContent означает, что содержимое blob-секрета не передано.
 var ErrEmptyContent = errors.New("empty content")
+
+// ErrSecretVersionConflict означает, что клиент обновляет неактуальную версию секрета.
+var ErrSecretVersionConflict = errors.New("secret version conflict")

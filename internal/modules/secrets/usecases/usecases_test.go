@@ -17,15 +17,17 @@ import (
 )
 
 type repositoryMock struct {
-	secret    domain.Secret
-	secrets   []domain.Secret
-	err       error
-	blob      domain.Blob
-	blobErr   error
-	saved     domain.Secret
-	savedBlob domain.Blob
-	updated   domain.Secret
-	deleted   bool
+	secret        domain.Secret
+	secrets       []domain.Secret
+	err           error
+	blob          domain.Blob
+	blobErr       error
+	saved         domain.Secret
+	savedBlob     domain.Blob
+	updated       domain.Secret
+	expected      int
+	deleted       bool
+	deletedBlobID uuid.UUID
 }
 
 func (m *repositoryMock) Save(_ context.Context, secret domain.Secret) error {
@@ -41,8 +43,9 @@ func (m *repositoryMock) List(_ context.Context, _ uuid.UUID) ([]domain.Secret, 
 	return m.secrets, m.err
 }
 
-func (m *repositoryMock) Update(_ context.Context, secret domain.Secret) error {
+func (m *repositoryMock) Update(_ context.Context, secret domain.Secret, expectedVersion int) error {
 	m.updated = secret
+	m.expected = expectedVersion
 	return m.err
 }
 
@@ -58,6 +61,11 @@ func (m *repositoryMock) SaveBlob(_ context.Context, blob domain.Blob) error {
 
 func (m *repositoryMock) LoadBlobBySecret(_ context.Context, _ uuid.UUID, _ uuid.UUID) (domain.Blob, error) {
 	return m.blob, m.blobErr
+}
+
+func (m *repositoryMock) MarkBlobDeleted(_ context.Context, _ uuid.UUID, blobID uuid.UUID) error {
+	m.deletedBlobID = blobID
+	return m.blobErr
 }
 
 type encryptorMock struct {
@@ -245,6 +253,65 @@ func TestUseCases(t *testing.T) {
 					assert.Equal(t, "book.txt", output.Blob.OriginalName)
 				},
 			)
+
+			t.Run(
+				"Должен заменить содержимое blob secret", func(t *testing.T) {
+					userID := uuid.New()
+					secretID := uuid.New()
+					oldBlobID := uuid.New()
+					now := time.Now().UTC()
+					secret := domain.Secret{
+						ID:            secretID,
+						UserID:        userID,
+						Type:          domain.SecretTypeText,
+						Name:          "book",
+						Metadata:      []byte(`encrypted:{}`),
+						MetadataNonce: []byte("nonce"),
+						Payload:       []byte(`encrypted:{}`),
+						PayloadNonce:  []byte("nonce"),
+						BlobID:        &oldBlobID,
+						Version:       2,
+						CreatedAt:     now,
+						UpdatedAt:     now,
+					}
+					oldBlob := domain.Blob{
+						ID:             oldBlobID,
+						UserID:         userID,
+						OriginalName:   "old.txt",
+						StorageName:    "old.gpk",
+						ContentType:    "text/plain",
+						Size:           3,
+						ChecksumSHA256: "old-checksum",
+						CreatedAt:      now,
+					}
+					repository := &repositoryMock{secret: secret, blob: oldBlob}
+					storage := &storageMock{}
+					useCase, err := NewUpdateBlobContentUseCase(repository, &encryptorMock{}, storage)
+					require.NoError(t, err)
+
+					output, err := useCase.Execute(
+						context.Background(),
+						BlobContentInput{
+							UserID:          userID,
+							ID:              secretID,
+							ExpectedVersion: 2,
+							OriginalName:    "new.txt",
+							ContentType:     "text/plain",
+							Content:         strings.NewReader("new"),
+						},
+					)
+
+					require.NoError(t, err)
+					assert.Equal(t, 3, output.Version)
+					require.NotNil(t, output.Blob)
+					assert.Equal(t, "new.txt", output.Blob.OriginalName)
+					require.NotNil(t, repository.updated.BlobID)
+					assert.NotEqual(t, oldBlobID, *repository.updated.BlobID)
+					assert.Equal(t, oldBlobID, repository.deletedBlobID)
+					assert.Equal(t, 2, repository.expected)
+					assert.Equal(t, []byte("stream:new"), storage.content.Bytes())
+				},
+			)
 		},
 	)
 
@@ -303,18 +370,44 @@ func TestUseCases(t *testing.T) {
 					output, err := useCase.Execute(
 						context.Background(),
 						UpdateSecretInput{
-							UserID:   userID,
-							ID:       secretID,
-							Type:     domain.SecretTypeCard,
-							Name:     "card",
-							Metadata: json.RawMessage(`{}`),
-							Payload:  json.RawMessage(`{"number":"1234"}`),
+							UserID:          userID,
+							ID:              secretID,
+							Type:            domain.SecretTypeCard,
+							Name:            "card",
+							Metadata:        json.RawMessage(`{}`),
+							Payload:         json.RawMessage(`{"number":"1234"}`),
+							ExpectedVersion: 2,
 						},
 					)
 
 					require.NoError(t, err)
 					assert.Equal(t, 3, output.Version)
 					assert.Equal(t, domain.SecretTypeCard, repository.updated.Type)
+					assert.Equal(t, 2, repository.expected)
+				},
+			)
+
+			t.Run(
+				"Должен вернуть conflict при неактуальной версии", func(t *testing.T) {
+					repository := &repositoryMock{secret: secret}
+					useCase, err := NewUpdateUseCase(repository, &encryptorMock{})
+					require.NoError(t, err)
+
+					_, err = useCase.Execute(
+						context.Background(),
+						UpdateSecretInput{
+							UserID:          userID,
+							ID:              secretID,
+							Type:            domain.SecretTypeCard,
+							Name:            "card",
+							Metadata:        json.RawMessage(`{}`),
+							Payload:         json.RawMessage(`{"number":"1234"}`),
+							ExpectedVersion: 1,
+						},
+					)
+
+					require.Error(t, err)
+					assert.ErrorIs(t, err, ErrSecretVersionConflict)
 				},
 			)
 
