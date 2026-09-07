@@ -35,12 +35,24 @@ ORDER BY updated_at DESC, id DESC`
 UPDATE secrets
 SET type = $3, name = $4, metadata = $5, metadata_nonce = $6, payload = $7, payload_nonce = $8,
 	blob_id = $9, version = $10, updated_at = $11
-WHERE user_id = $1 AND id = $2 AND deleted_at IS NULL`
+WHERE user_id = $1 AND id = $2 AND deleted_at IS NULL AND version = $12`
 
 	deleteSecretQuery = `
-UPDATE secrets
-SET deleted_at = now(), updated_at = now(), version = version + 1
-WHERE user_id = $1 AND id = $2 AND deleted_at IS NULL`
+WITH deleted_secret AS (
+	UPDATE secrets
+	SET deleted_at = now(), updated_at = now(), version = version + 1
+	WHERE user_id = $1 AND id = $2 AND deleted_at IS NULL
+	RETURNING blob_id
+),
+deleted_blob AS (
+	UPDATE blobs
+	SET deleted_at = now()
+	WHERE user_id = $1
+		AND id IN (SELECT blob_id FROM deleted_secret WHERE blob_id IS NOT NULL)
+		AND deleted_at IS NULL
+	RETURNING id
+)
+SELECT count(*) FROM deleted_secret`
 
 	saveBlobQuery = `
 INSERT INTO blobs (
@@ -52,6 +64,11 @@ SELECT b.id, b.user_id, b.original_name, b.storage_name, b.storage_path, b.conte
 FROM blobs b
 JOIN secrets s ON s.blob_id = b.id
 WHERE s.user_id = $1 AND s.id = $2 AND s.deleted_at IS NULL AND b.deleted_at IS NULL`
+
+	markBlobDeletedQuery = `
+UPDATE blobs
+SET deleted_at = now()
+WHERE user_id = $1 AND id = $2 AND deleted_at IS NULL`
 )
 
 // Pool выполняет SQL-запросы к Postgres.
@@ -129,8 +146,8 @@ func (r *Repository) List(ctx context.Context, userID uuid.UUID) ([]domain.Secre
 	return result, nil
 }
 
-// Update обновляет JSON-секрет.
-func (r *Repository) Update(ctx context.Context, secret domain.Secret) error {
+// Update обновляет JSON-секрет по ожидаемой версии.
+func (r *Repository) Update(ctx context.Context, secret domain.Secret, expectedVersion int) error {
 	tag, err := r.pool.Exec(
 		ctx,
 		updateSecretQuery,
@@ -145,12 +162,13 @@ func (r *Repository) Update(ctx context.Context, secret domain.Secret) error {
 		secret.BlobID,
 		secret.Version,
 		secret.UpdatedAt,
+		expectedVersion,
 	)
 	if err != nil {
 		return fmt.Errorf("update secret: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return usecases.ErrSecretNotFound
+		return usecases.ErrSecretVersionConflict
 	}
 	return nil
 }
@@ -187,12 +205,24 @@ func (r *Repository) LoadBlobBySecret(ctx context.Context, userID uuid.UUID, sec
 
 // Delete помечает JSON-секрет удаленным.
 func (r *Repository) Delete(ctx context.Context, userID uuid.UUID, secretID uuid.UUID) error {
-	tag, err := r.pool.Exec(ctx, deleteSecretQuery, userID, secretID)
-	if err != nil {
+	var deletedCount int
+	if err := r.pool.QueryRow(ctx, deleteSecretQuery, userID, secretID).Scan(&deletedCount); err != nil {
 		return fmt.Errorf("delete secret: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
+	if deletedCount == 0 {
 		return usecases.ErrSecretNotFound
+	}
+	return nil
+}
+
+// MarkBlobDeleted помечает blob удаленным без удаления физического файла.
+func (r *Repository) MarkBlobDeleted(ctx context.Context, userID uuid.UUID, blobID uuid.UUID) error {
+	tag, err := r.pool.Exec(ctx, markBlobDeletedQuery, userID, blobID)
+	if err != nil {
+		return fmt.Errorf("mark blob deleted: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return usecases.ErrBlobNotFound
 	}
 	return nil
 }

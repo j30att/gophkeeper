@@ -16,10 +16,11 @@ type Repository interface {
 	Save(ctx context.Context, secret domain.Secret) error
 	Load(ctx context.Context, userID uuid.UUID, secretID uuid.UUID) (domain.Secret, error)
 	List(ctx context.Context, userID uuid.UUID) ([]domain.Secret, error)
-	Update(ctx context.Context, secret domain.Secret) error
+	Update(ctx context.Context, secret domain.Secret, expectedVersion int) error
 	Delete(ctx context.Context, userID uuid.UUID, secretID uuid.UUID) error
 	SaveBlob(ctx context.Context, blob domain.Blob) error
 	LoadBlobBySecret(ctx context.Context, userID uuid.UUID, secretID uuid.UUID) (domain.Blob, error)
+	MarkBlobDeleted(ctx context.Context, userID uuid.UUID, blobID uuid.UUID) error
 }
 
 // Encryptor шифрует и расшифровывает приватные JSON-поля.
@@ -45,6 +46,16 @@ type SecretInput struct {
 	Payload  json.RawMessage
 }
 
+// BlobContentInput содержит данные замены содержимого blob-секрета.
+type BlobContentInput struct {
+	UserID          uuid.UUID
+	ID              uuid.UUID
+	ExpectedVersion int
+	OriginalName    string
+	ContentType     string
+	Content         io.Reader
+}
+
 // BlobSecretInput содержит данные создания blob-секрета.
 type BlobSecretInput struct {
 	UserID       uuid.UUID
@@ -58,12 +69,13 @@ type BlobSecretInput struct {
 
 // UpdateSecretInput содержит данные обновления JSON-секрета.
 type UpdateSecretInput struct {
-	UserID   uuid.UUID
-	ID       uuid.UUID
-	Type     domain.SecretType
-	Name     string
-	Metadata json.RawMessage
-	Payload  json.RawMessage
+	UserID          uuid.UUID
+	ID              uuid.UUID
+	Type            domain.SecretType
+	Name            string
+	Metadata        json.RawMessage
+	Payload         json.RawMessage
+	ExpectedVersion int
 }
 
 // SecretOutput содержит расшифрованный JSON-секрет.

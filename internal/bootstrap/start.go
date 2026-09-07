@@ -45,10 +45,11 @@ type SecretsRepository interface {
 	Save(ctx context.Context, secret secretsdomain.Secret) error
 	Load(ctx context.Context, userID uuid.UUID, secretID uuid.UUID) (secretsdomain.Secret, error)
 	List(ctx context.Context, userID uuid.UUID) ([]secretsdomain.Secret, error)
-	Update(ctx context.Context, secret secretsdomain.Secret) error
+	Update(ctx context.Context, secret secretsdomain.Secret, expectedVersion int) error
 	Delete(ctx context.Context, userID uuid.UUID, secretID uuid.UUID) error
 	SaveBlob(ctx context.Context, blob secretsdomain.Blob) error
 	LoadBlobBySecret(ctx context.Context, userID uuid.UUID, secretID uuid.UUID) (secretsdomain.Blob, error)
+	MarkBlobDeleted(ctx context.Context, userID uuid.UUID, blobID uuid.UUID) error
 }
 
 // StartServer собирает зависимости и запускает HTTP-сервер GophKeeper.
@@ -99,6 +100,7 @@ func BuildRouter(
 		return nil, fmt.Errorf("%w: secretsRepository", secretsusecases.ErrEmptyDependency)
 	}
 	router := chi.NewRouter()
+	registerDocumentationRoutes(router)
 	infraapi.HandlerFromMux(infraapi.NewStrictHandler(infrahandlers.New(), nil), router)
 
 	passwordHasher := password.NewBcryptHasher()
@@ -156,6 +158,10 @@ func BuildRouter(
 	if err != nil {
 		return nil, fmt.Errorf("create blob content use case: %w", err)
 	}
+	updateBlobContentUseCase, err := secretsusecases.NewUpdateBlobContentUseCase(secretsRepository, encryptor, blobStorage)
+	if err != nil {
+		return nil, fmt.Errorf("create blob content update use case: %w", err)
+	}
 
 	secretsHandler, err := secretshandlers.New(
 		logger,
@@ -166,6 +172,7 @@ func BuildRouter(
 		deleteSecretUseCase,
 		createBlobUseCase,
 		getBlobContentUseCase,
+		updateBlobContentUseCase,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create secrets handler: %w", err)

@@ -192,7 +192,6 @@ Blob - это физический объект хранения для `text` �
 - `content_type`;
 - `size`;
 - `checksum_sha256`;
-- `encryption_nonce`;
 - `created_at`;
 - `deleted_at`.
 
@@ -222,7 +221,7 @@ Blob - это физический объект хранения для `text` �
 - encryption key берем из server config/env как обычную строку;
 - внутри приложения получаем AES-256 key через SHA-256 от этой строки;
 - для каждой structured-записи и каждого blob-файла генерируем отдельный nonce;
-- nonce храним рядом с данными: для structured payload в `secrets`, для файлов в `blobs.encryption_nonce`;
+- nonce храним рядом с данными: для structured payload в `secrets`, для stream-файлов nonce пишется в зашифрованный файл;
 - в коде все равно закладываем интерфейс `Encryptor`, чтобы позже можно было заменить реализацию без переписывания usecase-слоя.
 - в коде оставляем комментарий, что для production лучше использовать случайный 32-byte ключ в base64 из secret storage, а не человекочитаемую строку.
 
@@ -265,6 +264,23 @@ POST /api/v1/sync              синхронизация изменений
 - `file` - содержимое файла stream'ом.
 
 Скачивание blob-содержимого идет через `GET /api/v1/secrets/{id}/content` stream-ответом.
+
+Замена blob-содержимого:
+
+- endpoint: `PUT /api/v1/secrets/{id}/content`;
+- request: `multipart/form-data`;
+- поля: `expected_version`, `file`;
+- сервер сохраняет новый физический blob под новым внутренним именем;
+- `secrets.blob_id` переключается на новый blob;
+- старый blob получает `blobs.deleted_at`;
+- физический файл не удаляем сразу, под это позже делаем простой cleanup job.
+
+Optimistic lock:
+
+- `PUT /api/v1/secrets/{id}` принимает `expected_version` в JSON body;
+- `PUT /api/v1/secrets/{id}/content` принимает `expected_version` в multipart body;
+- если текущая версия секрета отличается от версии клиента, сервер возвращает `409 Conflict`;
+- SQL update дополнительно фильтрует `WHERE version = $expected_version`, чтобы закрыть race между чтением и записью.
 
 Авторизация:
 
@@ -311,6 +327,7 @@ Use cases:
 - `GetSecret`;
 - `ListSecrets`;
 - `UpdateSecret`;
+- `UpdateBlobContent`;
 - `DeleteSecret`;
 - `SyncSecrets`.
 
@@ -318,6 +335,8 @@ Repository:
 
 - CRUD по `user_id`;
 - optimistic update по `version`;
+- soft delete связанного blob при удалении секрета;
+- soft delete старого blob при замене содержимого;
 - выборка изменений после timestamp/revision;
 - soft delete.
 

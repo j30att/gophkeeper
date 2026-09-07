@@ -156,6 +156,15 @@ type SecretResponse struct {
 // SecretType defines model for SecretType.
 type SecretType string
 
+// SecretUpdateRequest defines model for SecretUpdateRequest.
+type SecretUpdateRequest struct {
+	ExpectedVersion int                     `json:"expected_version"`
+	Metadata        *map[string]interface{} `json:"metadata,omitempty"`
+	Name            string                  `json:"name"`
+	Payload         map[string]interface{}  `json:"payload"`
+	Type            StructuredSecretType    `json:"type"`
+}
+
 // StructuredSecretType defines model for StructuredSecretType.
 type StructuredSecretType string
 
@@ -172,6 +181,12 @@ type PostApiV1SecretsBlobMultipartBody struct {
 	Type     BlobSecretType `json:"type"`
 }
 
+// PutApiV1SecretsIdContentMultipartBody defines parameters for PutApiV1SecretsIdContent.
+type PutApiV1SecretsIdContentMultipartBody struct {
+	ExpectedVersion int                `json:"expected_version"`
+	File            openapi_types.File `json:"file"`
+}
+
 // PostApiV1SecretsJSONRequestBody defines body for PostApiV1Secrets for application/json ContentType.
 type PostApiV1SecretsJSONRequestBody = SecretRequest
 
@@ -179,7 +194,10 @@ type PostApiV1SecretsJSONRequestBody = SecretRequest
 type PostApiV1SecretsBlobMultipartRequestBody PostApiV1SecretsBlobMultipartBody
 
 // PutApiV1SecretsIdJSONRequestBody defines body for PutApiV1SecretsId for application/json ContentType.
-type PutApiV1SecretsIdJSONRequestBody = SecretRequest
+type PutApiV1SecretsIdJSONRequestBody = SecretUpdateRequest
+
+// PutApiV1SecretsIdContentMultipartRequestBody defines body for PutApiV1SecretsIdContent for multipart/form-data ContentType.
+type PutApiV1SecretsIdContentMultipartRequestBody PutApiV1SecretsIdContentMultipartBody
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
@@ -204,6 +222,9 @@ type ServerInterface interface {
 	// Download blob secret content
 	// (GET /api/v1/secrets/{id}/content)
 	GetApiV1SecretsIdContent(w http.ResponseWriter, r *http.Request, id SecretID)
+	// Replace blob secret content
+	// (PUT /api/v1/secrets/{id}/content)
+	PutApiV1SecretsIdContent(w http.ResponseWriter, r *http.Request, id SecretID)
 }
 
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
@@ -249,6 +270,12 @@ func (_ Unimplemented) PutApiV1SecretsId(w http.ResponseWriter, r *http.Request,
 // Download blob secret content
 // (GET /api/v1/secrets/{id}/content)
 func (_ Unimplemented) GetApiV1SecretsIdContent(w http.ResponseWriter, r *http.Request, id SecretID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Replace blob secret content
+// (PUT /api/v1/secrets/{id}/content)
+func (_ Unimplemented) PutApiV1SecretsIdContent(w http.ResponseWriter, r *http.Request, id SecretID) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -445,6 +472,37 @@ func (siw *ServerInterfaceWrapper) GetApiV1SecretsIdContent(w http.ResponseWrite
 	handler.ServeHTTP(w, r)
 }
 
+// PutApiV1SecretsIdContent operation middleware
+func (siw *ServerInterfaceWrapper) PutApiV1SecretsIdContent(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id SecretID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutApiV1SecretsIdContent(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 type UnescapedCookieParamError struct {
 	ParamName string
 	Err       error
@@ -578,6 +636,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/secrets/{id}/content", wrapper.GetApiV1SecretsIdContent)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/secrets/{id}/content", wrapper.PutApiV1SecretsIdContent)
 	})
 
 	return r
@@ -837,6 +898,24 @@ func (response PutApiV1SecretsId404JSONResponse) VisitPutApiV1SecretsIdResponse(
 	return json.NewEncoder(w).Encode(response)
 }
 
+type PutApiV1SecretsId409JSONResponse ErrorResponse
+
+func (response PutApiV1SecretsId409JSONResponse) VisitPutApiV1SecretsIdResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutApiV1SecretsId500JSONResponse ErrorResponse
+
+func (response PutApiV1SecretsId500JSONResponse) VisitPutApiV1SecretsIdResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type GetApiV1SecretsIdContentRequestObject struct {
 	Id SecretID `json:"id"`
 }
@@ -897,6 +976,69 @@ func (response GetApiV1SecretsIdContent404JSONResponse) VisitGetApiV1SecretsIdCo
 	return json.NewEncoder(w).Encode(response)
 }
 
+type PutApiV1SecretsIdContentRequestObject struct {
+	Id   SecretID `json:"id"`
+	Body *multipart.Reader
+}
+
+type PutApiV1SecretsIdContentResponseObject interface {
+	VisitPutApiV1SecretsIdContentResponse(w http.ResponseWriter) error
+}
+
+type PutApiV1SecretsIdContent200JSONResponse SecretResponse
+
+func (response PutApiV1SecretsIdContent200JSONResponse) VisitPutApiV1SecretsIdContentResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutApiV1SecretsIdContent400JSONResponse ErrorResponse
+
+func (response PutApiV1SecretsIdContent400JSONResponse) VisitPutApiV1SecretsIdContentResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutApiV1SecretsIdContent401JSONResponse ErrorResponse
+
+func (response PutApiV1SecretsIdContent401JSONResponse) VisitPutApiV1SecretsIdContentResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutApiV1SecretsIdContent404JSONResponse ErrorResponse
+
+func (response PutApiV1SecretsIdContent404JSONResponse) VisitPutApiV1SecretsIdContentResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutApiV1SecretsIdContent409JSONResponse ErrorResponse
+
+func (response PutApiV1SecretsIdContent409JSONResponse) VisitPutApiV1SecretsIdContentResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutApiV1SecretsIdContent500JSONResponse ErrorResponse
+
+func (response PutApiV1SecretsIdContent500JSONResponse) VisitPutApiV1SecretsIdContentResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
 	// List JSON secrets
@@ -920,6 +1062,9 @@ type StrictServerInterface interface {
 	// Download blob secret content
 	// (GET /api/v1/secrets/{id}/content)
 	GetApiV1SecretsIdContent(ctx context.Context, request GetApiV1SecretsIdContentRequestObject) (GetApiV1SecretsIdContentResponseObject, error)
+	// Replace blob secret content
+	// (PUT /api/v1/secrets/{id}/content)
+	PutApiV1SecretsIdContent(ctx context.Context, request PutApiV1SecretsIdContentRequestObject) (PutApiV1SecretsIdContentResponseObject, error)
 }
 
 type StrictHandlerFunc = strictnethttp.StrictHTTPHandlerFunc
@@ -1148,30 +1293,65 @@ func (sh *strictHandler) GetApiV1SecretsIdContent(w http.ResponseWriter, r *http
 	}
 }
 
+// PutApiV1SecretsIdContent operation middleware
+func (sh *strictHandler) PutApiV1SecretsIdContent(w http.ResponseWriter, r *http.Request, id SecretID) {
+	var request PutApiV1SecretsIdContentRequestObject
+
+	request.Id = id
+
+	if reader, err := r.MultipartReader(); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode multipart body: %w", err))
+		return
+	} else {
+		request.Body = reader
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutApiV1SecretsIdContent(ctx, request.(PutApiV1SecretsIdContentRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutApiV1SecretsIdContent")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutApiV1SecretsIdContentResponseObject); ok {
+		if err := validResponse.VisitPutApiV1SecretsIdContentResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"H4sIAAAAAAAC/+xZ32/bNhD+VwRuj0pkt2kf9JakW+eu2IKm3QYkQcCIF4udRKrkKa0b6H8f+EOWZMmO",
-	"knleiubNFqnj3Xff3X20b0ki80IKEKhJfEsKqmgOCMp+O4VEAc5emc9ckJgUFFMSEkFzIDHhjIREwaeS",
-	"K2AkRlVCSHSSQk7NG9dS5RRJTMrS7sRFYd7SqLiYk6qq6s32rKNMXlkPlCxAIQf7NEkh+VuX+aVO6bMX",
-	"L82jFTMhSaRAEHjpFgY2cDbCnZBIxedc0OzShTdgSPOv0DHFBb48aGxxgTAHRUxoDS5nDqiu+RW3ve2w",
-	"F/DF0ri8+ggJGjcMVC41733IIMrcHITwBUlIrrigatF6twnhJ6Wkege6kEJDH28wywNpkGwYkRy0pvOh",
-	"tRUIrIVmfz+slf3OkaHoXeR9H688gX5UcE1i8kPUMDvyPIssyQxlFFAEdkmxk05GEfaQ2/Q8lEU5IGUU",
-	"bQVQxjhyKWh20nLV1UkvrrWsK+gik5Td22BdD5sAadGoCklZsHvDUmpQlyOxuQGluRStKDdWTG3aW/IQ",
-	"tSBuLHZS2glkPYXeco0zhPw7otJuKHHPNP9nyV3f5rTdYz9yhFyPw2RJmCWShCpFF72wavPr3XsHn0rQ",
-	"A13sX+c85+ItiDmmJJ6GO24mqMoESwWszaEVbLrZrt3ZhNTmJI5L3ZoUbTh3dbQmChgI5DTThpBUWere",
-	"OW8HMdlstm/GSA9ISsVxcWrC8l0KqAJ1WJpU199+rgv0zZ/viddXxpJbbYo1RSycBOPiWtpK5ZiZldey",
-	"SH8FKEAFhyezVhXGZLI/2Z9apVSAoAUnMXm+P9l/bvOIqXUqIvFtFZKIFjy6mUa0xDTK5Nyox95zBXOu",
-	"EVR3qVWbc5dek3RqmDpjxkHAw4L/MT31+0xeHUXsO88mE6dYrLqyPC+KjCfWQPRRu77UqNRxZb9kocWM",
-	"gU4UL9DB4h0JFGCpBDCD0MFkujUvupJtwIEPwsApFf/qDn+xRQjuPHwmEJSgWaBB3YAKnHBrU5bEZ12y",
-	"nl1UFyHRZZ6bqomJATh4c/r7b4Fe5hTpXHdaqeldUg/w4UTqPiFsdz2SbLFlLtR9u+r2E9M0qx4Rp1s/",
-	"/C4SBn5QOgrukAVHlAWqxuaJ/vei/7HNWbsABvnfb5FRrVPHFYZVrJuKIy8z5AVVGBmdt1fLkAap7vy9",
-	"5ln3NuzH4B1Ktoufi9puDD5zTAMj+oOWCIQvNC/sZLo9J5ojnJP4vH66n8j8nFRDR47UQ2N0zcp9e7Oi",
-	"sagMXG8fWb8wMXm2PTWNb7dpXDVpHNs0bjmrXB1mgNBvG6/s83bjmDGr8JpfBs+G42+2RMtfDo3XKzQ/",
-	"6HcBP72cS983EQ8cPrs53OMuJAbXshTsfhx0TNlEv3CUhN8yvya7l11d6f/E3MfO3NeA9fBrSY3BO0c5",
-	"pKzKLfP3UVxX/oe68T/lPZXNt1E2H2y6HnJTMaIjaoU4biwc+xd2NR1kgoB7GhXQvAv6nXecNQrbH9QM",
-	"iJCkQJn/f/WvvWP/d9/e6S+H/v/N5tDeEU9lsqvATe4eqorkZ5FJytravObBcLlU1T8BAAD//w0tRz6H",
-	"HwAA",
+	"H4sIAAAAAAAC/+xZYW/bNhP+KwLf96MS2W1aYPqWplvnrliDpN0GJEHAiGebnUSq5CmNG+i/DyQlS7Jk",
+	"W05cp0X9LbGo491zz909pO5JJJNUChCoSXhPUqpoAgjK/ncOkQIcvTZ/c0FCklKcEp8ImgAJCWfEJwo+",
+	"Z1wBIyGqDHyioykk1LwxliqhSEKSZXYlzlLzlkbFxYTkeV4utnu9iuWN9UDJFBRysL9GU4j+1Vlyraf0",
+	"2YuX5qcFMz6JpEAQeO0edCzgrIc7PpGKT7ig8bULr8OQ5l+hYYoLfHlU2eICYQKKmNAqXC4cUE3zC24X",
+	"tv1WwFdz4/LmE0Ro3DBQudR8KEIGkSVmI4Q7JD654YKqWe3dKoRflZLqDHQqhYY23mAed6RBsm5EEtCa",
+	"TrqeLUBgLVTr22EtrHeOdEXvIm/7eFMQ6P8KxiQk/wsqZgcFzwJLMkMZBRSBXVNspJNRhAPkNj0PZVEC",
+	"SBlFWwGUMY5cChqf1lx1ddKKaynrUjqLJWUbGyzrYRUgNRrlPslStjEsmQZ13RObW1CaS1GLcmXFlKYL",
+	"SwVENYgri42UNgJZTqF3XOMIIfmJqLQbSmyY5m+W3OVtTts19k+OkOh+mMwJM0eSUKXorBVWaX65e2fw",
+	"OQPd0cUenfOEi3cgJjgl4dDfcTNBlUWYKWB1Di1g08x26c4qpFYnsV/qlqRoxb6LozVSwEAgp7E2hKTK",
+	"UnftvHXGPlrK1pJO4/j9mIQXfXwvX8v91rS+SyEypVCruIQLnhiXh2tlSev1NhpXJoSutK5Gpo2EUU8Q",
+	"ZYrj7NxEVzRaoArUcWbYWv73W9lj3v79gRQS0VhyT6t+M0VMnYrkYixts+EYmydvZDr9AyAF5R2fjmqN",
+	"JCSDw8Hh0Iq9FARNOQnJ88PB4XNLRZxapwIS3uc+CWjKg9thQDOcBrGcGAHc+l3BhGsE1XxUay8Tx1CT",
+	"NWqKbcSMg4DHKf9reF6sM2lxLLfvPBsMnOiyAtHSJU1jHlkDwSftEl0J7X6da15IFjMGOlI8RQdL4Yin",
+	"ADMlgBmEjgbDrXnRVJ0dDnwUBk6p+Fe3+YstQrB285FAUILGngZ1C8pz2rNOWVupdbJeXOVXPtFZkpjC",
+	"D4kB2Ht7/v5PT89zinSiG9PAtF+pO/hwKnWbELboX0k22zIX5u2k2Q5M389bRBxuffN1JPSKWe8ouEMW",
+	"vKLMU/NWu6f/JvQ/sTmrF0An/9stMiildr/CsKJ7VXEkWYw8pQoDI1UPSiVVIdUcoGMeNw/0xSRfI8ab",
+	"+Lmo7ULvC8epZ84tXk3Hwh1NUjuZ7i+J5giXJLwsfz2MZHJJ8q4te0q6PtJs4cpgtSizqHSc0L+zfmFi",
+	"Kti2bxo/btO4qdLYt2ncc5a7OowBod02Xtvf641jxKzCqy43lyjvakkwv/w0Xi/Q/KjdBYrp5Vz6uYl4",
+	"5PDZzeYF7kKiN5aZYJtx0DFlFf38XhJ+y/wa7F52NaX/nrnfO3PfAJbDryY1Os8cWZeyyrbM3291XGle",
+	"nfQSIU9QPcWd5L54nq54jAO/7NyB4mrJi6QYx9xdIP5oQsyV2ENOb0aIBbU4+43Kk+KFXU1MGSHggUYF",
+	"NGkiv/bct+TUUWxUDU2fTIGy4rP5PwcnxVfcg/Pfj4vP1tWmrS32TWNXgZvcPVQpyi8ilpTVzyslDx41",
+	"eLdUDVu6Edn0k4Lf/w5l3deHR108DHZ98VC1gDSm0X70P10V7wf/Qwf/meNu75aW5/l/AQAA//9zAIyx",
+	"MSYAAA==",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

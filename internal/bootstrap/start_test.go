@@ -39,6 +39,39 @@ func TestBuildRouter(t *testing.T) {
 	)
 
 	t.Run(
+		"Должен отдать OpenAPI spec", func(t *testing.T) {
+			router, err := BuildRouter(zerolog.Nop(), testConfig(t), newTestUserRepository(), testSecretsRepository{})
+			require.NoError(t, err)
+
+			request := httptest.NewRequest(http.MethodGet, "/openapi.yml", nil)
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, request)
+
+			require.Equal(t, http.StatusOK, recorder.Code)
+			assert.Equal(t, "application/yaml; charset=utf-8", recorder.Header().Get("Content-Type"))
+			assert.Contains(t, recorder.Body.String(), "openapi: 3.0.3")
+		},
+	)
+
+	t.Run(
+		"Должен отдать Swagger UI", func(t *testing.T) {
+			router, err := BuildRouter(zerolog.Nop(), testConfig(t), newTestUserRepository(), testSecretsRepository{})
+			require.NoError(t, err)
+
+			request := httptest.NewRequest(http.MethodGet, "/docs", nil)
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, request)
+
+			require.Equal(t, http.StatusOK, recorder.Code)
+			assert.Equal(t, "text/html; charset=utf-8", recorder.Header().Get("Content-Type"))
+			assert.Contains(t, recorder.Body.String(), "SwaggerUIBundle")
+			assert.Contains(t, recorder.Body.String(), `url: "/openapi.yml"`)
+		},
+	)
+
+	t.Run(
 		"Должен зарегистрировать пользователя и выполнить login", func(t *testing.T) {
 			router, err := BuildRouter(zerolog.Nop(), testConfig(t), newTestUserRepository(), testSecretsRepository{})
 			require.NoError(t, err)
@@ -121,7 +154,7 @@ func (testSecretsRepository) List(_ context.Context, _ uuid.UUID) ([]secretsdoma
 	return nil, nil
 }
 
-func (testSecretsRepository) Update(_ context.Context, _ secretsdomain.Secret) error {
+func (testSecretsRepository) Update(_ context.Context, _ secretsdomain.Secret, _ int) error {
 	return secretsusecases.ErrSecretNotFound
 }
 
@@ -139,6 +172,10 @@ func (testSecretsRepository) LoadBlobBySecret(
 	_ uuid.UUID,
 ) (secretsdomain.Blob, error) {
 	return secretsdomain.Blob{}, secretsusecases.ErrBlobNotFound
+}
+
+func (testSecretsRepository) MarkBlobDeleted(_ context.Context, _ uuid.UUID, _ uuid.UUID) error {
+	return secretsusecases.ErrBlobNotFound
 }
 
 func TestRunHTTPServer(t *testing.T) {

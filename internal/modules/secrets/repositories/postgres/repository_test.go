@@ -43,12 +43,17 @@ type rowMock struct {
 	secret domain.Secret
 	blob   domain.Blob
 	isBlob bool
+	count  *int
 	err    error
 }
 
 func (r *rowMock) Scan(dest ...any) error {
 	if r.err != nil {
 		return r.err
+	}
+	if r.count != nil {
+		*(dest[0].(*int)) = *r.count
+		return nil
 	}
 	if r.isBlob {
 		scanBlobValues(r.blob, dest...)
@@ -189,7 +194,7 @@ func TestRepository(t *testing.T) {
 			repository, err := NewRepository(&poolMock{execTag: pgconn.NewCommandTag("UPDATE 1")})
 			require.NoError(t, err)
 
-			err = repository.Update(context.Background(), testSecret())
+			err = repository.Update(context.Background(), testSecret(), 1)
 
 			require.NoError(t, err)
 		},
@@ -200,7 +205,33 @@ func TestRepository(t *testing.T) {
 			repository, err := NewRepository(&poolMock{execTag: pgconn.NewCommandTag("UPDATE 0")})
 			require.NoError(t, err)
 
-			err = repository.Update(context.Background(), testSecret())
+			err = repository.Update(context.Background(), testSecret(), 1)
+
+			require.Error(t, err)
+			assert.ErrorIs(t, err, usecases.ErrSecretVersionConflict)
+		},
+	)
+
+	t.Run(
+		"Должен удалить secret", func(t *testing.T) {
+			secret := testSecret()
+			deletedCount := 1
+			repository, err := NewRepository(&poolMock{row: &rowMock{count: &deletedCount}})
+			require.NoError(t, err)
+
+			err = repository.Delete(context.Background(), secret.UserID, secret.ID)
+
+			require.NoError(t, err)
+		},
+	)
+
+	t.Run(
+		"Должен вернуть not found при delete без rows", func(t *testing.T) {
+			deletedCount := 0
+			repository, err := NewRepository(&poolMock{row: &rowMock{count: &deletedCount}})
+			require.NoError(t, err)
+
+			err = repository.Delete(context.Background(), uuid.New(), uuid.New())
 
 			require.Error(t, err)
 			assert.ErrorIs(t, err, usecases.ErrSecretNotFound)
@@ -208,12 +239,12 @@ func TestRepository(t *testing.T) {
 	)
 
 	t.Run(
-		"Должен удалить secret", func(t *testing.T) {
-			secret := testSecret()
+		"Должен пометить blob удаленным", func(t *testing.T) {
+			blob := testBlob()
 			repository, err := NewRepository(&poolMock{execTag: pgconn.NewCommandTag("UPDATE 1")})
 			require.NoError(t, err)
 
-			err = repository.Delete(context.Background(), secret.UserID, secret.ID)
+			err = repository.MarkBlobDeleted(context.Background(), blob.UserID, blob.ID)
 
 			require.NoError(t, err)
 		},

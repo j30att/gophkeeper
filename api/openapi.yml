@@ -245,7 +245,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SecretRequest"
+              $ref: "#/components/schemas/SecretUpdateRequest"
       responses:
         "200":
           description: Secret updated
@@ -267,6 +267,18 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Secret not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Secret version conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
           content:
             application/json:
               schema:
@@ -333,6 +345,66 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Blob not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      tags: ["secrets"]
+      summary: Replace blob secret content
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SecretID"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - expected_version
+                - file
+              properties:
+                expected_version:
+                  type: integer
+                  minimum: 1
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Blob content replaced
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecretResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Blob not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Secret version conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
           content:
             application/json:
               schema:
@@ -420,6 +492,16 @@ components:
         payload:
           type: object
           additionalProperties: true
+    SecretUpdateRequest:
+      allOf:
+        - $ref: "#/components/schemas/SecretRequest"
+        - type: object
+          required:
+            - expected_version
+          properties:
+            expected_version:
+              type: integer
+              minimum: 1
     Blob:
       type: object
       required:
