@@ -24,6 +24,7 @@ vendor/
 .env.*
 *.local.yml
 *.local.yaml
+PROJECT_PLAN.md
 
 # IDE и OS
 .idea/

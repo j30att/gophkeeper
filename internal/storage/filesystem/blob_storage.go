@@ -63,6 +63,21 @@ func (s *BlobStorage) Open(ctx context.Context, storageName string) (io.ReadClos
 	return file, nil
 }
 
+// Delete удаляет blob-файл с диска.
+func (s *BlobStorage) Delete(ctx context.Context, storageName string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	path, err := s.path(storageName)
+	if err != nil {
+		return err
+	}
+	if err = os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("delete blob file: %w", err)
+	}
+	return nil
+}
+
 func (s *BlobStorage) path(storageName string) (string, error) {
 	if strings.TrimSpace(storageName) == "" {
 		return "", fmt.Errorf("empty storage name")

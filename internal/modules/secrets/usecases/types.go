@@ -21,6 +21,8 @@ type Repository interface {
 	SaveBlob(ctx context.Context, blob domain.Blob) error
 	LoadBlobBySecret(ctx context.Context, userID uuid.UUID, secretID uuid.UUID) (domain.Blob, error)
 	MarkBlobDeleted(ctx context.Context, userID uuid.UUID, blobID uuid.UUID) error
+	ListBlobsForCleanup(ctx context.Context, before time.Time, limit int) ([]domain.Blob, error)
+	MarkBlobStorageDeleted(ctx context.Context, userID uuid.UUID, blobID uuid.UUID) error
 }
 
 // Encryptor шифрует и расшифровывает приватные JSON-поля.
@@ -35,6 +37,7 @@ type Encryptor interface {
 type BlobStorage interface {
 	Save(ctx context.Context, storageName string, reader io.Reader) (string, error)
 	Open(ctx context.Context, storageName string) (io.ReadCloser, error)
+	Delete(ctx context.Context, storageName string) error
 }
 
 // SecretInput содержит данные JSON-секрета.

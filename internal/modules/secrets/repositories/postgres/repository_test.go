@@ -31,7 +31,9 @@ func (m *poolMock) Exec(_ context.Context, sql string, arguments ...any) (pgconn
 	return m.execTag, m.execErr
 }
 
-func (m *poolMock) Query(_ context.Context, _ string, _ ...any) (pgx.Rows, error) {
+func (m *poolMock) Query(_ context.Context, sql string, args ...any) (pgx.Rows, error) {
+	m.execSQL = sql
+	m.execArgs = args
 	return m.rows, m.queryErr
 }
 
@@ -65,18 +67,28 @@ func (r *rowMock) Scan(dest ...any) error {
 
 type rowsMock struct {
 	secrets []domain.Secret
+	blobs   []domain.Blob
+	isBlob  bool
 	cursor  int
 	err     error
 	scanErr error
 }
 
 func (r *rowsMock) Next() bool {
+	if r.isBlob {
+		return r.cursor < len(r.blobs)
+	}
 	return r.cursor < len(r.secrets)
 }
 
 func (r *rowsMock) Scan(dest ...any) error {
 	if r.scanErr != nil {
 		return r.scanErr
+	}
+	if r.isBlob {
+		scanBlobValues(r.blobs[r.cursor], dest...)
+		r.cursor++
+		return nil
 	}
 	scanSecretValues(r.secrets[r.cursor], dest...)
 	r.cursor++
@@ -251,6 +263,18 @@ func TestRepository(t *testing.T) {
 	)
 
 	t.Run(
+		"Должен вернуть not found при mark blob deleted без rows", func(t *testing.T) {
+			repository, err := NewRepository(&poolMock{execTag: pgconn.NewCommandTag("UPDATE 0")})
+			require.NoError(t, err)
+
+			err = repository.MarkBlobDeleted(context.Background(), uuid.New(), uuid.New())
+
+			require.Error(t, err)
+			assert.ErrorIs(t, err, usecases.ErrBlobNotFound)
+		},
+	)
+
+	t.Run(
 		"Должен сохранить blob", func(t *testing.T) {
 			pool := &poolMock{}
 			repository, err := NewRepository(pool)
@@ -275,6 +299,35 @@ func TestRepository(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, blob.ID, loaded.ID)
 			assert.Equal(t, blob.StorageName, loaded.StorageName)
+		},
+	)
+
+	t.Run(
+		"Должен вернуть blobs для cleanup", func(t *testing.T) {
+			blob := testBlob()
+			deletedAt := time.Now().UTC()
+			blob.DeletedAt = &deletedAt
+			repository, err := NewRepository(&poolMock{rows: &rowsMock{blobs: []domain.Blob{blob}, isBlob: true}})
+			require.NoError(t, err)
+
+			loaded, err := repository.ListBlobsForCleanup(context.Background(), time.Now().UTC(), 10)
+
+			require.NoError(t, err)
+			require.Len(t, loaded, 1)
+			assert.Equal(t, blob.ID, loaded[0].ID)
+			require.NotNil(t, loaded[0].DeletedAt)
+		},
+	)
+
+	t.Run(
+		"Должен пометить физический blob удаленным", func(t *testing.T) {
+			blob := testBlob()
+			repository, err := NewRepository(&poolMock{execTag: pgconn.NewCommandTag("UPDATE 1")})
+			require.NoError(t, err)
+
+			err = repository.MarkBlobStorageDeleted(context.Background(), blob.UserID, blob.ID)
+
+			require.NoError(t, err)
 		},
 	)
 }
@@ -306,6 +359,7 @@ func scanBlobValues(blob domain.Blob, dest ...any) {
 	*(dest[7].(*string)) = blob.ChecksumSHA256
 	*(dest[8].(*time.Time)) = blob.CreatedAt
 	*(dest[9].(**time.Time)) = blob.DeletedAt
+	*(dest[10].(**time.Time)) = blob.StorageDeletedAt
 }
 
 func testSecret() domain.Secret {

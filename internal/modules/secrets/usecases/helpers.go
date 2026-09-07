@@ -3,9 +3,22 @@ package usecases
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/igor/gophkeeper/internal/modules/secrets/domain"
 )
+
+type credentialsPayload struct {
+	Login    string `json:"login"`
+	Password string `json:"password"`
+}
+
+type cardPayload struct {
+	Number    string `json:"number"`
+	Holder    string `json:"holder"`
+	ExpiresAt string `json:"expires_at"`
+	CVV       string `json:"cvv"`
+}
 
 func validateStructuredInput(secretType domain.SecretType, metadata json.RawMessage, payload json.RawMessage) error {
 	if !domain.IsStructuredType(secretType) {
@@ -14,7 +27,7 @@ func validateStructuredInput(secretType domain.SecretType, metadata json.RawMess
 	if err := validateJSON(metadata, []byte("{}")); err != nil {
 		return fmt.Errorf("%w: metadata", err)
 	}
-	if err := validateJSON(payload, nil); err != nil {
+	if err := validateStructuredPayload(secretType, payload); err != nil {
 		return fmt.Errorf("%w: payload", err)
 	}
 	return nil
@@ -41,6 +54,32 @@ func validateJSON(value json.RawMessage, fallback []byte) error {
 	normalized := normalizeJSON(value, fallback)
 	if len(normalized) == 0 || !json.Valid(normalized) {
 		return ErrInvalidJSON
+	}
+	return nil
+}
+
+func validateStructuredPayload(secretType domain.SecretType, payload json.RawMessage) error {
+	if err := validateJSON(payload, nil); err != nil {
+		return err
+	}
+	switch secretType {
+	case domain.SecretTypeCredentials:
+		var value credentialsPayload
+		if err := json.Unmarshal(payload, &value); err != nil {
+			return ErrInvalidJSON
+		}
+		if strings.TrimSpace(value.Login) == "" || strings.TrimSpace(value.Password) == "" {
+			return ErrInvalidJSON
+		}
+	case domain.SecretTypeCard:
+		var value cardPayload
+		if err := json.Unmarshal(payload, &value); err != nil {
+			return ErrInvalidJSON
+		}
+		if strings.TrimSpace(value.Number) == "" || strings.TrimSpace(value.Holder) == "" ||
+			strings.TrimSpace(value.ExpiresAt) == "" || strings.TrimSpace(value.CVV) == "" {
+			return ErrInvalidJSON
+		}
 	}
 	return nil
 }

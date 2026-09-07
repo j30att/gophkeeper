@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"mime/multipart"
 	"strconv"
 
@@ -298,6 +299,10 @@ func (h *Handler) GetApiV1SecretsIdContent(
 		Body:          output.Content,
 		ContentLength: output.Blob.Size,
 		Headers: secrets.GetApiV1SecretsIdContent200ResponseHeaders{
+			ContentDisposition: mime.FormatMediaType(
+				"attachment",
+				map[string]string{"filename": output.Blob.OriginalName},
+			),
 			XChecksumSHA256: output.Blob.ChecksumSHA256,
 		},
 	}, nil

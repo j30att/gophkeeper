@@ -1,7 +1,8 @@
 .PHONY: all
-all: fmt test build-server
+all: fmt test build-server build-cleanup
 
 BINARY_SERVER=gophkeeper-server
+BINARY_CLEANUP=gophkeeper-cleanup
 VERSION ?= 0.0.1
 BUILD_DATE = $(shell date -u '+%Y-%m-%d_%H:%M:%S')
 LDFLAGS = -ldflags "-X main.version=$(VERSION)"
@@ -22,9 +23,17 @@ test:
 build-server:
 	go build -race $(LDFLAGS) -o bin/$(BINARY_SERVER) ./cmd/$(BINARY_SERVER)
 
+.PHONY: build-cleanup
+build-cleanup:
+	go build -race -o bin/$(BINARY_CLEANUP) ./cmd/$(BINARY_CLEANUP)
+
 .PHONY: run-server-dev
 run-server-dev:
 	go run -race ./cmd/$(BINARY_SERVER)
+
+.PHONY: cleanup-blobs
+cleanup-blobs:
+	go run -race ./cmd/$(BINARY_CLEANUP)
 
 .PHONY: compose-up
 compose-up:

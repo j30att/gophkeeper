@@ -430,16 +430,17 @@ func (sh *strictHandler) PostApiV1AuthRegister(w http.ResponseWriter, r *http.Re
 var swaggerSpec = []string{
 
 	"H4sIAAAAAAAC/8xWTW/bMAz9Kwa3oxMnywZ0BnZogW3I1kPRfR2KYlBsNlFnSypFZw0C//eBclw3idvu",
-	"EBQ9RRYlvcfHRyJryGzprEHDHtI1+GyBpQrL44oX53hToWf5dGQdEmsMwcLOtZFFqc0pmjkvIJ3EwCuH",
-	"kIJn0mYOMdwOrHJ6kNkc52gGeMukBqzm4Y2lKnSuWC4Q3lSaMI9LbT5MoK5jcMr7v5ZyOXllqVQMabcZ",
-	"3wc+OhDwEdSC3O5BerHJ8x6byzssO7vGjKGO4SORpXP0zhqP+1qhhPe3hZv8blOvYyjRezXvi+2QCy90",
-	"5/ep7ZxviPRlcCppPpwB2z9onubTHOt7/xzn2jM+IlLlkX7r7WpXlZZKPw7aXuzN3mNWkebVN7F1AzRD",
-	"RUhi7u7rU4v45dd3iJsmkJeaaEdhwewaj2hzZYMgmguJfLZu8RXRIUXHZ1OIYYnktTWQwmg4Go5FBOvQ",
-	"KKchhclwNJwEV/EikEogXdcxJMrpZDlOVMWL5K7FnG06UORSrK2Z5pDCmfV87PTPsaRyurEpNf16YvNV",
-	"YzHDaMJl5Vyhs3A9ufbWdM0uq9eEV5DCq6SbBslmFCT358BOfzBVGDaaqoZU3oxGB4PetmUAz9FnpB03",
-	"2go3NCyvYy4avz0g+nZb96CfqDyiVhnBHj8f9tSEKRZlhLkooAovHN49Z/5Tw0hGFZFHWiJFzXwJfVeV",
-	"paIVpM1kiaRJpY3CAL4A8Tdc1ruOp82U+E/Tt0Plpfj+cNXfG5c94v/wSFGr2Esw//vnww65q4JQ5asI",
-	"b7Xnl2n+to5P+99jRhj+gu1vJrPCzvoja53XD0eSTom6rv8FAAD//2ASiBrrCQAA",
+	"EBQ9VSYlvcenRzZryGzprEHDHtI1+GyBpQrL44oX53hToWf5dGQdEmsMycLOtZFFqc0pmjkvIJ3EwCuH",
+	"kIJn0mYOMdwOrHJ6kNkc52gGeMukBqzm4Y6lKnSuWA4Q3lSaMI9LbT5MoK5jcMr7v5Zy2XllqVQMaReM",
+	"7wMfHQj4CGpBbmOQXmzqvMfm8g7Lzq4xY6hj+Ehk6Ry9s8bjvlYo6f2wcJO/29TrGEr0Xs37cjvkwg3d",
+	"/n1qO/sbIn0VnEqZD1fA9g+ap/k02/ruP8e59oyPiFR5pN96+7WrSstLPw7aHuyt3mNWkebVN7F1AzRD",
+	"RUhi7u7rU4v45dd3iJsmkJuabEdhwewaj2hzZYMgmgvJfLZu8RXRIUXHZ1OIYYnktTWQwmg4Go5FBOvQ",
+	"KKchhclwNJwEV/EikEogXdcxJMrpZDlOVMWL5K7FnG06UORSrK2Z5pDCmfV87PTPsZRyurEpNf16YvNV",
+	"YzHDaMJh5Vyhs3A8ufbWdM0uq9eEV5DCq6SbBslmFCT358BOfzBVGALNq4ZS3oxGB4PetmUAz9FnpB03",
+	"2go3NCy3Yy4avz0g+nZb96CfqDyiVhnBHj8f9tSEKRZlhLkooAovHN49Z/1Tw0hGFZFHWiJFzXwJfVeV",
+	"paIVpM1kiaRJpY3CAL4A8Tdc1ruOp82U+E/Tt0Plpfj+cK+/Ny57xP/hkaJWsZdg/vfPhx1qVwWhylcR",
+	"3mrPL9P87Ts+7X+PGWH4CbYfTGaFnfVn1jqvH84knRKyI7dZC7D5VzRclYVE6vpfAAAA///z8slkCAoA",
+	"AA==",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

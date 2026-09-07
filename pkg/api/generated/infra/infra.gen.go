@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"path"
@@ -30,6 +31,12 @@ type ServerInterface interface {
 	// Health check
 	// (GET /)
 	Get(w http.ResponseWriter, r *http.Request)
+	// Swagger UI
+	// (GET /docs)
+	GetDocs(w http.ResponseWriter, r *http.Request)
+	// OpenAPI specification
+	// (GET /openapi.yml)
+	GetOpenapiYml(w http.ResponseWriter, r *http.Request)
 }
 
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
@@ -39,6 +46,18 @@ type Unimplemented struct{}
 // Health check
 // (GET /)
 func (_ Unimplemented) Get(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Swagger UI
+// (GET /docs)
+func (_ Unimplemented) GetDocs(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// OpenAPI specification
+// (GET /openapi.yml)
+func (_ Unimplemented) GetOpenapiYml(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -56,6 +75,34 @@ func (siw *ServerInterfaceWrapper) Get(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.Get(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetDocs operation middleware
+func (siw *ServerInterfaceWrapper) GetDocs(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetDocs(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetOpenapiYml operation middleware
+func (siw *ServerInterfaceWrapper) GetOpenapiYml(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOpenapiYml(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -181,6 +228,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/", wrapper.Get)
 	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/docs", wrapper.GetDocs)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/openapi.yml", wrapper.GetOpenapiYml)
+	})
 
 	return r
 }
@@ -201,11 +254,69 @@ func (response Get200JSONResponse) VisitGetResponse(w http.ResponseWriter) error
 	return json.NewEncoder(w).Encode(response)
 }
 
+type GetDocsRequestObject struct {
+}
+
+type GetDocsResponseObject interface {
+	VisitGetDocsResponse(w http.ResponseWriter) error
+}
+
+type GetDocs200TexthtmlResponse struct {
+	Body          io.Reader
+	ContentLength int64
+}
+
+func (response GetDocs200TexthtmlResponse) VisitGetDocsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "text/html")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetOpenapiYmlRequestObject struct {
+}
+
+type GetOpenapiYmlResponseObject interface {
+	VisitGetOpenapiYmlResponse(w http.ResponseWriter) error
+}
+
+type GetOpenapiYml200ApplicationyamlResponse struct {
+	Body          io.Reader
+	ContentLength int64
+}
+
+func (response GetOpenapiYml200ApplicationyamlResponse) VisitGetOpenapiYmlResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/yaml")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
 	// Health check
 	// (GET /)
 	Get(ctx context.Context, request GetRequestObject) (GetResponseObject, error)
+	// Swagger UI
+	// (GET /docs)
+	GetDocs(ctx context.Context, request GetDocsRequestObject) (GetDocsResponseObject, error)
+	// OpenAPI specification
+	// (GET /openapi.yml)
+	GetOpenapiYml(ctx context.Context, request GetOpenapiYmlRequestObject) (GetOpenapiYmlResponseObject, error)
 }
 
 type StrictHandlerFunc = strictnethttp.StrictHTTPHandlerFunc
@@ -261,16 +372,65 @@ func (sh *strictHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// GetDocs operation middleware
+func (sh *strictHandler) GetDocs(w http.ResponseWriter, r *http.Request) {
+	var request GetDocsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetDocs(ctx, request.(GetDocsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetDocs")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetDocsResponseObject); ok {
+		if err := validResponse.VisitGetDocsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetOpenapiYml operation middleware
+func (sh *strictHandler) GetOpenapiYml(w http.ResponseWriter, r *http.Request) {
+	var request GetOpenapiYmlRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetOpenapiYml(ctx, request.(GetOpenapiYmlRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetOpenapiYml")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetOpenapiYmlResponseObject); ok {
+		if err := validResponse.VisitGetOpenapiYmlResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"H4sIAAAAAAAC/3RSwW4UMQz9lcpwHG2m9JZbhQSUHkCAxAH1kMl4Jy4zSXA8lVar/DtypssK2F4mHvv5",
-	"xX4vR/BpySlilAL2CMUHXFwLP6CbJbwN6H9+wZJTLKjpzCkjC+GGFydri+SQESwUYYoT1NoB46+VGEew",
-	"P064h+6ES8Mjemm4gn5lksNXvXujHdAx8u0q4fz3LvHiBCx8/P4Num1SZdqq8Ic5iGSoSkxxn9poJLNW",
-	"3qcc7hEz8tXt5zvo4Am5UIpgod/1u2uoHaSM0WUCCze7fncDHWQnoQ1l9DOh6KEaOKEU70YlRgHdd1Op",
-	"gd/0vR4+RcHYWlzOM/nWZB6L3nqSW6PXjHuw8Mqc/TDPZphLTrQFRyyeKcu2w6f7Tc51WRwfwD47eOW1",
-	"UfVxU1EvKO7ZwYNijctknq6NWyWYOU2kU/2bZ5yoCPLfpYKesT2a/5NmmNNwuXKksb5cMWe9aq2/AwAA",
-	"//+o5GP7nQIAAA==",
+	"H4sIAAAAAAAC/5RSTW/UMBD9K9HAMYpTesttBYIubdWKFqEK9eB1ZhOXxDbjSSGq8t/ROLusut0F9RI7",
+	"fm8+3pt5AuP74B06jlA9QTQt9jpdz1B33L5v0fz4gjF4F1GeA/mAxBZnPmse0o3HgFBBZLKugWnKgfDn",
+	"YAlrqL5veff5ludXD2g48SKagSyPN1J7TrtCTUiLgdvd30dPvWao4PO3W8jnTiXTjMLfzC1zgEkSW7f2",
+	"qTXLnSCffGjPEQNStrheQg6PSNF6BxWURVmcwJSDD+h0sFDBaVEWp5BD0NymppR8GmQ5xAPN1rtlLYmR",
+	"QfTOLiXyu7KUw3jH6FKIDqGzJgWphyhVt3bL7S3hGip4o3bzUJthqEOTSAJrjIZs4FnD1fls59D3mkao",
+	"NhPMjASKP7qJMgvr1qThXrhKB6seT5QeuFWdb6x0tf9O2NjISM+hiIYwLc3LR7Xq/Oow8mTr6Tiidn4J",
+	"o/Ym/sv0D4L/13jG36xa7rvnju8v7As/b37ppkHKvi6zs9vLiz1zd+gRazebVIxz4WMarmbaXd+9boVG",
+	"/WpBUmpxvczuFpcXGSEP5LDek7XlxIDGrjfFDimcpj8BAAD//9plF448BAAA",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

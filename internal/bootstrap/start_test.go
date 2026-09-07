@@ -49,7 +49,7 @@ func TestBuildRouter(t *testing.T) {
 			router.ServeHTTP(recorder, request)
 
 			require.Equal(t, http.StatusOK, recorder.Code)
-			assert.Equal(t, "application/yaml; charset=utf-8", recorder.Header().Get("Content-Type"))
+			assert.Equal(t, "application/yaml", recorder.Header().Get("Content-Type"))
 			assert.Contains(t, recorder.Body.String(), "openapi: 3.0.3")
 		},
 	)
@@ -65,7 +65,7 @@ func TestBuildRouter(t *testing.T) {
 			router.ServeHTTP(recorder, request)
 
 			require.Equal(t, http.StatusOK, recorder.Code)
-			assert.Equal(t, "text/html; charset=utf-8", recorder.Header().Get("Content-Type"))
+			assert.Equal(t, "text/html", recorder.Header().Get("Content-Type"))
 			assert.Contains(t, recorder.Body.String(), "SwaggerUIBundle")
 			assert.Contains(t, recorder.Body.String(), `url: "/openapi.yml"`)
 		},
@@ -99,6 +99,27 @@ func TestBuildRouter(t *testing.T) {
 			}
 			require.NoError(t, json.NewDecoder(loginRecorder.Body).Decode(&response))
 			assert.NotEmpty(t, response.Token)
+		},
+	)
+
+	t.Run(
+		"Должен вернуть JSON-ошибку при невалидном request body", func(t *testing.T) {
+			router, err := BuildRouter(zerolog.Nop(), testConfig(t), newTestUserRepository(), testSecretsRepository{})
+			require.NoError(t, err)
+
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString("{"))
+			request.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, request)
+
+			require.Equal(t, http.StatusBadRequest, recorder.Code)
+			assert.Equal(t, "application/json", recorder.Header().Get("Content-Type"))
+			assert.JSONEq(
+				t,
+				`{"error":{"code":"bad_request","message":"invalid request"}}`,
+				recorder.Body.String(),
+			)
 		},
 	)
 
@@ -175,6 +196,18 @@ func (testSecretsRepository) LoadBlobBySecret(
 }
 
 func (testSecretsRepository) MarkBlobDeleted(_ context.Context, _ uuid.UUID, _ uuid.UUID) error {
+	return secretsusecases.ErrBlobNotFound
+}
+
+func (testSecretsRepository) ListBlobsForCleanup(
+	_ context.Context,
+	_ time.Time,
+	_ int,
+) ([]secretsdomain.Blob, error) {
+	return nil, nil
+}
+
+func (testSecretsRepository) MarkBlobStorageDeleted(_ context.Context, _ uuid.UUID, _ uuid.UUID) error {
 	return secretsusecases.ErrBlobNotFound
 }
 
