@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -60,7 +61,8 @@ INSERT INTO blobs (
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
 
 	loadBlobBySecretQuery = `
-SELECT b.id, b.user_id, b.original_name, b.storage_name, b.storage_path, b.content_type, b.size, b.checksum_sha256, b.created_at, b.deleted_at
+SELECT b.id, b.user_id, b.original_name, b.storage_name, b.storage_path, b.content_type, b.size,
+	b.checksum_sha256, b.created_at, b.deleted_at, b.storage_deleted_at
 FROM blobs b
 JOIN secrets s ON s.blob_id = b.id
 WHERE s.user_id = $1 AND s.id = $2 AND s.deleted_at IS NULL AND b.deleted_at IS NULL`
@@ -69,6 +71,19 @@ WHERE s.user_id = $1 AND s.id = $2 AND s.deleted_at IS NULL AND b.deleted_at IS 
 UPDATE blobs
 SET deleted_at = now()
 WHERE user_id = $1 AND id = $2 AND deleted_at IS NULL`
+
+	listBlobsForCleanupQuery = `
+SELECT id, user_id, original_name, storage_name, storage_path, content_type, size,
+	checksum_sha256, created_at, deleted_at, storage_deleted_at
+FROM blobs
+WHERE deleted_at IS NOT NULL AND storage_deleted_at IS NULL AND deleted_at < $1
+ORDER BY deleted_at ASC, id ASC
+LIMIT $2`
+
+	markBlobStorageDeletedQuery = `
+UPDATE blobs
+SET storage_deleted_at = now()
+WHERE user_id = $1 AND id = $2 AND deleted_at IS NOT NULL AND storage_deleted_at IS NULL`
 )
 
 // Pool выполняет SQL-запросы к Postgres.
@@ -227,6 +242,40 @@ func (r *Repository) MarkBlobDeleted(ctx context.Context, userID uuid.UUID, blob
 	return nil
 }
 
+// ListBlobsForCleanup возвращает blob-файлы, которые уже удалены логически, но еще лежат на диске.
+func (r *Repository) ListBlobsForCleanup(ctx context.Context, before time.Time, limit int) ([]domain.Blob, error) {
+	rows, err := r.pool.Query(ctx, listBlobsForCleanupQuery, before, limit)
+	if err != nil {
+		return nil, fmt.Errorf("select blobs for cleanup: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]domain.Blob, 0)
+	for rows.Next() {
+		blob, err := scanBlob(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, blob)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate cleanup blobs: %w", err)
+	}
+	return result, nil
+}
+
+// MarkBlobStorageDeleted помечает физический файл blob удаленным.
+func (r *Repository) MarkBlobStorageDeleted(ctx context.Context, userID uuid.UUID, blobID uuid.UUID) error {
+	tag, err := r.pool.Exec(ctx, markBlobStorageDeletedQuery, userID, blobID)
+	if err != nil {
+		return fmt.Errorf("mark blob storage deleted: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return usecases.ErrBlobNotFound
+	}
+	return nil
+}
+
 func scanSecret(row pgx.Row) (domain.Secret, error) {
 	var secret domain.Secret
 	err := row.Scan(
@@ -272,6 +321,7 @@ func scanBlob(row pgx.Row) (domain.Blob, error) {
 		&blob.ChecksumSHA256,
 		&blob.CreatedAt,
 		&blob.DeletedAt,
+		&blob.StorageDeletedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -283,6 +333,10 @@ func scanBlob(row pgx.Row) (domain.Blob, error) {
 	if blob.DeletedAt != nil {
 		deletedAt := blob.DeletedAt.UTC()
 		blob.DeletedAt = &deletedAt
+	}
+	if blob.StorageDeletedAt != nil {
+		storageDeletedAt := blob.StorageDeletedAt.UTC()
+		blob.StorageDeletedAt = &storageDeletedAt
 	}
 	return blob, nil
 }

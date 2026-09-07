@@ -3,6 +3,7 @@
 GophKeeper - учебный клиент-серверный менеджер приватных данных.
 
 Сейчас реализуется серверная часть: регистрация, логин, хранение structured-секретов, blob-секретов, Swagger/OpenAPI и Postgres storage.
+Синхронизация и клиентская TUI-часть отложены до стабилизации backend API.
 
 ## Требования
 
@@ -64,6 +65,18 @@ make test
 make build-server
 ```
 
+Собрать cleanup-команду:
+
+```bash
+make build-cleanup
+```
+
+Удалить с диска blob-файлы, которые уже удалены логически:
+
+```bash
+make cleanup-blobs
+```
+
 ## Примеры curl
 
 Health check:
@@ -99,6 +112,25 @@ curl -i -X POST http://127.0.0.1:8080/api/v1/secrets \
     "name": "github",
     "metadata": {"site": "github.com"},
     "payload": {"login": "igor", "password": "secret"}
+  }'
+```
+
+Создать секрет банковской карты:
+
+```bash
+curl -i -X POST http://127.0.0.1:8080/api/v1/secrets \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "type": "card",
+    "name": "main card",
+    "metadata": {"bank": "demo"},
+    "payload": {
+      "number": "4111111111111111",
+      "holder": "IGOR TEST",
+      "expires_at": "12/30",
+      "cvv": "123"
+    }
   }'
 ```
 

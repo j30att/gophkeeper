@@ -28,6 +28,8 @@ type repositoryMock struct {
 	expected      int
 	deleted       bool
 	deletedBlobID uuid.UUID
+	cleanupBlobs  []domain.Blob
+	storageBlobID uuid.UUID
 }
 
 func (m *repositoryMock) Save(_ context.Context, secret domain.Secret) error {
@@ -65,6 +67,15 @@ func (m *repositoryMock) LoadBlobBySecret(_ context.Context, _ uuid.UUID, _ uuid
 
 func (m *repositoryMock) MarkBlobDeleted(_ context.Context, _ uuid.UUID, blobID uuid.UUID) error {
 	m.deletedBlobID = blobID
+	return m.blobErr
+}
+
+func (m *repositoryMock) ListBlobsForCleanup(_ context.Context, _ time.Time, _ int) ([]domain.Blob, error) {
+	return m.cleanupBlobs, m.blobErr
+}
+
+func (m *repositoryMock) MarkBlobStorageDeleted(_ context.Context, _ uuid.UUID, blobID uuid.UUID) error {
+	m.storageBlobID = blobID
 	return m.blobErr
 }
 
@@ -115,6 +126,7 @@ func (m *encryptorMock) DecryptStream(src io.Reader, dst io.Writer) error {
 type storageMock struct {
 	content bytes.Buffer
 	err     error
+	deleted string
 }
 
 func (m *storageMock) Save(_ context.Context, _ string, reader io.Reader) (string, error) {
@@ -130,6 +142,11 @@ func (m *storageMock) Open(_ context.Context, _ string) (io.ReadCloser, error) {
 		return nil, m.err
 	}
 	return io.NopCloser(bytes.NewReader(m.content.Bytes())), nil
+}
+
+func (m *storageMock) Delete(_ context.Context, storageName string) error {
+	m.deleted = storageName
+	return m.err
 }
 
 func TestUseCases(t *testing.T) {
@@ -312,6 +329,27 @@ func TestUseCases(t *testing.T) {
 					assert.Equal(t, []byte("stream:new"), storage.content.Bytes())
 				},
 			)
+
+			t.Run(
+				"Должен удалить физические файлы soft-deleted blob", func(t *testing.T) {
+					blob := domain.Blob{
+						ID:          uuid.New(),
+						UserID:      uuid.New(),
+						StorageName: "old.gpk",
+					}
+					repository := &repositoryMock{cleanupBlobs: []domain.Blob{blob}}
+					storage := &storageMock{}
+					useCase, err := NewCleanupBlobsUseCase(repository, storage)
+					require.NoError(t, err)
+
+					output, err := useCase.Execute(context.Background(), CleanupBlobsInput{})
+
+					require.NoError(t, err)
+					assert.Equal(t, 1, output.Deleted)
+					assert.Equal(t, "old.gpk", storage.deleted)
+					assert.Equal(t, blob.ID, repository.storageBlobID)
+				},
+			)
 		},
 	)
 
@@ -370,12 +408,14 @@ func TestUseCases(t *testing.T) {
 					output, err := useCase.Execute(
 						context.Background(),
 						UpdateSecretInput{
-							UserID:          userID,
-							ID:              secretID,
-							Type:            domain.SecretTypeCard,
-							Name:            "card",
-							Metadata:        json.RawMessage(`{}`),
-							Payload:         json.RawMessage(`{"number":"1234"}`),
+							UserID:   userID,
+							ID:       secretID,
+							Type:     domain.SecretTypeCard,
+							Name:     "card",
+							Metadata: json.RawMessage(`{}`),
+							Payload: json.RawMessage(
+								`{"number":"1234","holder":"IGOR","expires_at":"12/30","cvv":"123"}`,
+							),
 							ExpectedVersion: 2,
 						},
 					)
@@ -396,12 +436,14 @@ func TestUseCases(t *testing.T) {
 					_, err = useCase.Execute(
 						context.Background(),
 						UpdateSecretInput{
-							UserID:          userID,
-							ID:              secretID,
-							Type:            domain.SecretTypeCard,
-							Name:            "card",
-							Metadata:        json.RawMessage(`{}`),
-							Payload:         json.RawMessage(`{"number":"1234"}`),
+							UserID:   userID,
+							ID:       secretID,
+							Type:     domain.SecretTypeCard,
+							Name:     "card",
+							Metadata: json.RawMessage(`{}`),
+							Payload: json.RawMessage(
+								`{"number":"1234","holder":"IGOR","expires_at":"12/30","cvv":"123"}`,
+							),
 							ExpectedVersion: 1,
 						},
 					)

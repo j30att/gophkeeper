@@ -8,7 +8,8 @@ CREATE TABLE IF NOT EXISTS blobs (
     size BIGINT NOT NULL,
     checksum_sha256 TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
-    deleted_at TIMESTAMPTZ
+    deleted_at TIMESTAMPTZ,
+    storage_deleted_at TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS secrets (
@@ -30,6 +31,7 @@ CREATE TABLE IF NOT EXISTS secrets (
 ALTER TABLE secrets DROP CONSTRAINT IF EXISTS secrets_type_check;
 ALTER TABLE secrets ADD CONSTRAINT secrets_type_check CHECK (type IN ('credentials', 'card', 'text', 'binary'));
 ALTER TABLE secrets ADD COLUMN IF NOT EXISTS blob_id UUID REFERENCES blobs (id);
+ALTER TABLE blobs ADD COLUMN IF NOT EXISTS storage_deleted_at TIMESTAMPTZ;
 
 CREATE INDEX IF NOT EXISTS secrets_user_id_idx ON secrets (user_id);
 CREATE INDEX IF NOT EXISTS secrets_updated_at_idx ON secrets (updated_at);

@@ -144,8 +144,11 @@ type SecretListResponse struct {
 type SecretRequest struct {
 	Metadata *map[string]interface{} `json:"metadata,omitempty"`
 	Name     string                  `json:"name"`
-	Payload  map[string]interface{}  `json:"payload"`
-	Type     StructuredSecretType    `json:"type"`
+
+	// Payload Для type=credentials ожидается CredentialsPayload.
+	// Для type=card ожидается CardPayload.
+	Payload map[string]interface{} `json:"payload"`
+	Type    StructuredSecretType   `json:"type"`
 }
 
 // SecretResponse defines model for SecretResponse.
@@ -161,8 +164,11 @@ type SecretUpdateRequest struct {
 	ExpectedVersion int                     `json:"expected_version"`
 	Metadata        *map[string]interface{} `json:"metadata,omitempty"`
 	Name            string                  `json:"name"`
-	Payload         map[string]interface{}  `json:"payload"`
-	Type            StructuredSecretType    `json:"type"`
+
+	// Payload Для type=credentials ожидается CredentialsPayload.
+	// Для type=card ожидается CardPayload.
+	Payload map[string]interface{} `json:"payload"`
+	Type    StructuredSecretType   `json:"type"`
 }
 
 // StructuredSecretType defines model for StructuredSecretType.
@@ -925,7 +931,8 @@ type GetApiV1SecretsIdContentResponseObject interface {
 }
 
 type GetApiV1SecretsIdContent200ResponseHeaders struct {
-	XChecksumSHA256 string
+	ContentDisposition string
+	XChecksumSHA256    string
 }
 
 type GetApiV1SecretsIdContent200ApplicationoctetStreamResponse struct {
@@ -939,6 +946,7 @@ func (response GetApiV1SecretsIdContent200ApplicationoctetStreamResponse) VisitG
 	if response.ContentLength != 0 {
 		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
 	}
+	w.Header().Set("Content-Disposition", fmt.Sprint(response.Headers.ContentDisposition))
 	w.Header().Set("X-Checksum-SHA256", fmt.Sprint(response.Headers.XChecksumSHA256))
 	w.WriteHeader(200)
 
@@ -1329,29 +1337,30 @@ func (sh *strictHandler) PutApiV1SecretsIdContent(w http.ResponseWriter, r *http
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"H4sIAAAAAAAC/+xZYW/bNhP+KwLf96MS2W1aYPqWplvnrliDpN0GJEHAiGebnUSq5CmNG+i/DyQlS7Jk",
-	"W05cp0X9LbGo491zz909pO5JJJNUChCoSXhPUqpoAgjK/ncOkQIcvTZ/c0FCklKcEp8ImgAJCWfEJwo+",
-	"Z1wBIyGqDHyioykk1LwxliqhSEKSZXYlzlLzlkbFxYTkeV4utnu9iuWN9UDJFBRysL9GU4j+1Vlyraf0",
-	"2YuX5qcFMz6JpEAQeO0edCzgrIc7PpGKT7ig8bULr8OQ5l+hYYoLfHlU2eICYQKKmNAqXC4cUE3zC24X",
-	"tv1WwFdz4/LmE0Ro3DBQudR8KEIGkSVmI4Q7JD654YKqWe3dKoRflZLqDHQqhYY23mAed6RBsm5EEtCa",
-	"TrqeLUBgLVTr22EtrHeOdEXvIm/7eFMQ6P8KxiQk/wsqZgcFzwJLMkMZBRSBXVNspJNRhAPkNj0PZVEC",
-	"SBlFWwGUMY5cChqf1lx1ddKKaynrUjqLJWUbGyzrYRUgNRrlPslStjEsmQZ13RObW1CaS1GLcmXFlKYL",
-	"SwVENYgri42UNgJZTqF3XOMIIfmJqLQbSmyY5m+W3OVtTts19k+OkOh+mMwJM0eSUKXorBVWaX65e2fw",
-	"OQPd0cUenfOEi3cgJjgl4dDfcTNBlUWYKWB1Di1g08x26c4qpFYnsV/qlqRoxb6LozVSwEAgp7E2hKTK",
-	"UnftvHXGPlrK1pJO4/j9mIQXfXwvX8v91rS+SyEypVCruIQLnhiXh2tlSev1NhpXJoSutK5Gpo2EUU8Q",
-	"ZYrj7NxEVzRaoArUcWbYWv73W9lj3v79gRQS0VhyT6t+M0VMnYrkYixts+EYmydvZDr9AyAF5R2fjmqN",
-	"JCSDw8Hh0Iq9FARNOQnJ88PB4XNLRZxapwIS3uc+CWjKg9thQDOcBrGcGAHc+l3BhGsE1XxUay8Tx1CT",
-	"NWqKbcSMg4DHKf9reF6sM2lxLLfvPBsMnOiyAtHSJU1jHlkDwSftEl0J7X6da15IFjMGOlI8RQdL4Yin",
-	"ADMlgBmEjgbDrXnRVJ0dDnwUBk6p+Fe3+YstQrB285FAUILGngZ1C8pz2rNOWVupdbJeXOVXPtFZkpjC",
-	"D4kB2Ht7/v5PT89zinSiG9PAtF+pO/hwKnWbELboX0k22zIX5u2k2Q5M389bRBxuffN1JPSKWe8ouEMW",
-	"vKLMU/NWu6f/JvQ/sTmrF0An/9stMiildr/CsKJ7VXEkWYw8pQoDI1UPSiVVIdUcoGMeNw/0xSRfI8ab",
-	"+Lmo7ULvC8epZ84tXk3Hwh1NUjuZ7i+J5giXJLwsfz2MZHJJ8q4te0q6PtJs4cpgtSizqHSc0L+zfmFi",
-	"Kti2bxo/btO4qdLYt2ncc5a7OowBod02Xtvf641jxKzCqy43lyjvakkwv/w0Xi/Q/KjdBYrp5Vz6uYl4",
-	"5PDZzeYF7kKiN5aZYJtx0DFlFf38XhJ+y/wa7F52NaX/nrnfO3PfAJbDryY1Os8cWZeyyrbM3291XGle",
-	"nfQSIU9QPcWd5L54nq54jAO/7NyB4mrJi6QYx9xdIP5oQsyV2ENOb0aIBbU4+43Kk+KFXU1MGSHggUYF",
-	"NGkiv/bct+TUUWxUDU2fTIGy4rP5PwcnxVfcg/Pfj4vP1tWmrS32TWNXgZvcPVQpyi8ilpTVzyslDx41",
-	"eLdUDVu6Edn0k4Lf/w5l3deHR108DHZ98VC1gDSm0X70P10V7wf/Qwf/meNu75aW5/l/AQAA//9zAIyx",
-	"MSYAAA==",
+	"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",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

@@ -3,6 +3,7 @@ package filesystem
 import (
 	"context"
 	"io"
+	"os"
 	"strings"
 	"testing"
 
@@ -35,5 +36,27 @@ func TestBlobStorage(t *testing.T) {
 		_, err = storage.Save(context.Background(), "../file.gpk", strings.NewReader("content"))
 
 		require.Error(t, err)
+	})
+
+	t.Run("Должен удалить blob", func(t *testing.T) {
+		storage, err := NewBlobStorage(t.TempDir())
+		require.NoError(t, err)
+		path, err := storage.Save(context.Background(), "file.gpk", strings.NewReader("content"))
+		require.NoError(t, err)
+
+		err = storage.Delete(context.Background(), "file.gpk")
+
+		require.NoError(t, err)
+		_, err = os.Stat(path)
+		require.ErrorIs(t, err, os.ErrNotExist)
+	})
+
+	t.Run("Должен игнорировать отсутствующий blob при delete", func(t *testing.T) {
+		storage, err := NewBlobStorage(t.TempDir())
+		require.NoError(t, err)
+
+		err = storage.Delete(context.Background(), "missing.gpk")
+
+		require.NoError(t, err)
 	})
 }

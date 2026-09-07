@@ -40,16 +40,17 @@ type Secret struct {
 
 // Blob содержит метаданные физического файла с зашифрованным содержимым.
 type Blob struct {
-	ID             uuid.UUID
-	UserID         uuid.UUID
-	OriginalName   string
-	StorageName    string
-	StoragePath    string
-	ContentType    string
-	Size           int64
-	ChecksumSHA256 string
-	CreatedAt      time.Time
-	DeletedAt      *time.Time
+	ID               uuid.UUID
+	UserID           uuid.UUID
+	OriginalName     string
+	StorageName      string
+	StoragePath      string
+	ContentType      string
+	Size             int64
+	ChecksumSHA256   string
+	CreatedAt        time.Time
+	DeletedAt        *time.Time
+	StorageDeletedAt *time.Time
 }
 
 // IsStructuredType возвращает true для JSON-типов, которые хранятся в payload.

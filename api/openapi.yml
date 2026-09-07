@@ -15,6 +15,28 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthCheckResponse"
+  /docs:
+    get:
+      tags: ["infra"]
+      summary: Swagger UI
+      responses:
+        "200":
+          description: Swagger UI HTML
+          content:
+            text/html:
+              schema:
+                type: string
+  /openapi.yml:
+    get:
+      tags: ["infra"]
+      summary: OpenAPI specification
+      responses:
+        "200":
+          description: OpenAPI YAML returned
+          content:
+            application/yaml:
+              schema:
+                type: string
   /api/v1/auth/register:
     post:
       tags: ["auth"]
@@ -323,6 +345,9 @@ paths:
         "200":
           description: Blob content returned
           headers:
+            Content-Disposition:
+              schema:
+                type: string
             X-Checksum-SHA256:
               schema:
                 type: string
@@ -490,6 +515,9 @@ components:
           type: object
           additionalProperties: true
         payload:
+          description: |
+            Для type=credentials ожидается CredentialsPayload.
+            Для type=card ожидается CardPayload.
           type: object
           additionalProperties: true
     SecretUpdateRequest:
@@ -523,6 +551,38 @@ components:
           format: int64
         checksum_sha256:
           type: string
+    CredentialsPayload:
+      type: object
+      required:
+        - login
+        - password
+      properties:
+        login:
+          type: string
+          minLength: 1
+        password:
+          type: string
+          minLength: 1
+    CardPayload:
+      type: object
+      required:
+        - number
+        - holder
+        - expires_at
+        - cvv
+      properties:
+        number:
+          type: string
+          minLength: 1
+        holder:
+          type: string
+          minLength: 1
+        expires_at:
+          type: string
+          minLength: 1
+        cvv:
+          type: string
+          minLength: 1
     Secret:
       type: object
       required:

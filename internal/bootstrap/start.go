@@ -50,6 +50,8 @@ type SecretsRepository interface {
 	SaveBlob(ctx context.Context, blob secretsdomain.Blob) error
 	LoadBlobBySecret(ctx context.Context, userID uuid.UUID, secretID uuid.UUID) (secretsdomain.Blob, error)
 	MarkBlobDeleted(ctx context.Context, userID uuid.UUID, blobID uuid.UUID) error
+	ListBlobsForCleanup(ctx context.Context, before time.Time, limit int) ([]secretsdomain.Blob, error)
+	MarkBlobStorageDeleted(ctx context.Context, userID uuid.UUID, blobID uuid.UUID) error
 }
 
 // StartServer собирает зависимости и запускает HTTP-сервер GophKeeper.
@@ -100,8 +102,7 @@ func BuildRouter(
 		return nil, fmt.Errorf("%w: secretsRepository", secretsusecases.ErrEmptyDependency)
 	}
 	router := chi.NewRouter()
-	registerDocumentationRoutes(router)
-	infraapi.HandlerFromMux(infraapi.NewStrictHandler(infrahandlers.New(), nil), router)
+	infraapi.HandlerFromMux(infraapi.NewStrictHandlerWithOptions(infrahandlers.New(), nil, infraStrictOptions()), router)
 
 	passwordHasher := password.NewBcryptHasher()
 	tokenIssuer := token.NewJWTIssuer(cfg.Auth.JWTSecret, cfg.Auth.AccessTokenTTL)
@@ -128,7 +129,7 @@ func BuildRouter(
 	if err != nil {
 		return nil, fmt.Errorf("create auth handler: %w", err)
 	}
-	authapi.HandlerFromMux(authapi.NewStrictHandler(authHandler, nil), router)
+	authapi.HandlerFromMux(authapi.NewStrictHandlerWithOptions(authHandler, nil, authStrictOptions()), router)
 
 	createSecretUseCase, err := secretsusecases.NewCreateUseCase(secretsRepository, encryptor)
 	if err != nil {
@@ -180,7 +181,10 @@ func BuildRouter(
 
 	router.Group(func(protected chi.Router) {
 		protected.Use(middleware.Auth(tokenIssuer))
-		secretsapi.HandlerFromMux(secretsapi.NewStrictHandler(secretsHandler, nil), protected)
+		secretsapi.HandlerFromMux(
+			secretsapi.NewStrictHandlerWithOptions(secretsHandler, nil, secretsStrictOptions()),
+			protected,
+		)
 	})
 
 	return router, nil
