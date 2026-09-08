@@ -1,11 +1,12 @@
 .PHONY: all
-all: fmt test build-server build-cleanup
+all: fmt test build-server build-cleanup build-client
 
 BINARY_SERVER=gophkeeper-server
 BINARY_CLEANUP=gophkeeper-cleanup
+BINARY_CLIENT=gophkeeper-client
 VERSION ?= 0.0.1
 BUILD_DATE = $(shell date -u '+%Y-%m-%d_%H:%M:%S')
-LDFLAGS = -ldflags "-X main.version=$(VERSION)"
+LDFLAGS = -ldflags "-X main.version=$(VERSION) -X main.buildDate=$(BUILD_DATE)"
 API_SPEC = $(shell pwd)/api/openapi.yml
 GENERATED_DIR = $(shell pwd)/pkg/api/generated
 
@@ -27,9 +28,17 @@ build-server:
 build-cleanup:
 	go build -race -o bin/$(BINARY_CLEANUP) ./cmd/$(BINARY_CLEANUP)
 
+.PHONY: build-client
+build-client:
+	go build -race $(LDFLAGS) -o bin/$(BINARY_CLIENT) ./cmd/$(BINARY_CLIENT)
+
 .PHONY: run-server-dev
 run-server-dev:
 	go run -race ./cmd/$(BINARY_SERVER)
+
+.PHONY: run-client-dev
+run-client-dev:
+	go run -race ./cmd/$(BINARY_CLIENT)
 
 .PHONY: cleanup-blobs
 cleanup-blobs:
