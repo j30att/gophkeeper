@@ -190,6 +190,28 @@ func TestRepository(t *testing.T) {
 	)
 
 	t.Run(
+		"Должен вернуть измененные secrets", func(t *testing.T) {
+			secret := testSecret()
+			deleted := testSecret()
+			deletedAt := time.Now().UTC()
+			deleted.DeletedAt = &deletedAt
+			pool := &poolMock{rows: &rowsMock{secrets: []domain.Secret{secret, deleted}}}
+			repository, err := NewRepository(pool)
+			require.NoError(t, err)
+			since := time.Now().Add(-time.Hour).UTC()
+
+			list, err := repository.ListChanged(context.Background(), secret.UserID, since)
+
+			require.NoError(t, err)
+			require.Len(t, list, 2)
+			assert.Equal(t, listChangedSecretsQuery, pool.execSQL)
+			assert.Equal(t, since, pool.execArgs[1])
+			assert.Equal(t, secret.ID, list[0].ID)
+			require.NotNil(t, list[1].DeletedAt)
+		},
+	)
+
+	t.Run(
 		"Должен вернуть ошибку query list", func(t *testing.T) {
 			repository, err := NewRepository(&poolMock{queryErr: assert.AnError})
 			require.NoError(t, err)

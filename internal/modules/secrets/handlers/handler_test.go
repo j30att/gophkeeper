@@ -133,6 +133,17 @@ func (m *updateBlobContentUseCaseMock) Execute(_ context.Context, input usecases
 	return m.output, m.err
 }
 
+type syncUseCaseMock struct {
+	output usecases.SyncOutput
+	err    error
+	input  usecases.SyncInput
+}
+
+func (m *syncUseCaseMock) Execute(_ context.Context, input usecases.SyncInput) (usecases.SyncOutput, error) {
+	m.input = input
+	return m.output, m.err
+}
+
 type tokenValidatorMock struct {
 	claims authtoken.Claims
 	err    error
@@ -155,6 +166,7 @@ func TestHandlerNew(t *testing.T) {
 				&createBlobUseCaseMock{},
 				&getBlobContentUseCaseMock{},
 				&updateBlobContentUseCaseMock{},
+				&syncUseCaseMock{},
 			)
 
 			require.NoError(t, err)
@@ -174,6 +186,7 @@ func TestHandlerNew(t *testing.T) {
 				&createBlobUseCaseMock{},
 				&getBlobContentUseCaseMock{},
 				&updateBlobContentUseCaseMock{},
+				&syncUseCaseMock{},
 			)
 
 			require.Error(t, err)
@@ -553,6 +566,68 @@ func TestHandlerPutApiV1SecretsIdContent(t *testing.T) {
 	)
 }
 
+func TestHandlerGetApiV1Sync(t *testing.T) {
+	t.Run(
+		"Должен вернуть изменения", func(t *testing.T) {
+			userID := uuid.New()
+			secretID := uuid.New()
+			deletedID := uuid.New()
+			since := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+			now := time.Now().UTC()
+			syncUseCase := &syncUseCaseMock{
+				output: usecases.SyncOutput{
+					ServerTime: now,
+					Secrets: []usecases.SecretOutput{
+						{
+							ID:        secretID,
+							UserID:    userID,
+							Type:      domain.SecretTypeCredentials,
+							Name:      "github",
+							Metadata:  json.RawMessage(`{"site":"github"}`),
+							Payload:   json.RawMessage(`{"login":"igor","password":"secret"}`),
+							Version:   2,
+							CreatedAt: now,
+							UpdatedAt: now,
+						},
+					},
+					Deleted: []usecases.DeletedSecretOutput{
+						{ID: deletedID, Version: 3, DeletedAt: now},
+					},
+				},
+			}
+			router := newTestRouter(t, userID, nil, nil, nil, nil, nil, nil, nil, nil, syncUseCase)
+			request := httptest.NewRequest(http.MethodGet, "/api/v1/sync?since="+since.Format(time.RFC3339), nil)
+			request.Header.Set("Authorization", "Bearer token")
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, request)
+
+			require.Equal(t, http.StatusOK, recorder.Code)
+			require.NotNil(t, syncUseCase.input.Since)
+			assert.Equal(t, since, syncUseCase.input.Since.UTC())
+			var response secrets.SyncResponse
+			require.NoError(t, json.NewDecoder(recorder.Body).Decode(&response))
+			require.Len(t, response.Secrets, 1)
+			require.Len(t, response.Deleted, 1)
+			assert.Equal(t, secretID, uuid.UUID(response.Secrets[0].Id))
+			assert.Equal(t, deletedID, uuid.UUID(response.Deleted[0].Id))
+		},
+	)
+
+	t.Run(
+		"Должен вернуть 500 при ошибке usecase", func(t *testing.T) {
+			router := newTestRouter(t, uuid.New(), nil, nil, nil, nil, nil, nil, nil, nil, &syncUseCaseMock{err: assert.AnError})
+			request := httptest.NewRequest(http.MethodGet, "/api/v1/sync", nil)
+			request.Header.Set("Authorization", "Bearer token")
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, request)
+
+			require.Equal(t, http.StatusInternalServerError, recorder.Code)
+		},
+	)
+}
+
 func TestHandlerUnauthorized(t *testing.T) {
 	router := newTestRouter(t, uuid.New(), nil, nil, nil, nil, nil, nil, nil, nil)
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/secrets", nil)
@@ -574,6 +649,7 @@ func newTestRouter(
 	createBlobUseCase CreateBlobUseCase,
 	getBlobContentUseCase GetBlobContentUseCase,
 	updateBlobContentUseCase UpdateBlobContentUseCase,
+	syncUseCases ...SyncUseCase,
 ) http.Handler {
 	t.Helper()
 	if createUseCase == nil {
@@ -600,6 +676,10 @@ func newTestRouter(
 	if updateBlobContentUseCase == nil {
 		updateBlobContentUseCase = &updateBlobContentUseCaseMock{}
 	}
+	syncUseCase := SyncUseCase(&syncUseCaseMock{})
+	if len(syncUseCases) > 0 && syncUseCases[0] != nil {
+		syncUseCase = syncUseCases[0]
+	}
 	handler, err := New(
 		zerolog.Nop(),
 		createUseCase,
@@ -610,6 +690,7 @@ func newTestRouter(
 		createBlobUseCase,
 		getBlobContentUseCase,
 		updateBlobContentUseCase,
+		syncUseCase,
 	)
 	require.NoError(t, err)
 	router := chi.NewRouter()

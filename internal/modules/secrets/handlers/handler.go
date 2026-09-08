@@ -60,6 +60,11 @@ type UpdateBlobContentUseCase interface {
 	Execute(ctx context.Context, input usecases.BlobContentInput) (usecases.SecretOutput, error)
 }
 
+// SyncUseCase возвращает изменения секретов.
+type SyncUseCase interface {
+	Execute(ctx context.Context, input usecases.SyncInput) (usecases.SyncOutput, error)
+}
+
 // Handler реализует generated secrets.StrictServerInterface.
 type Handler struct {
 	logger            zerolog.Logger
@@ -71,6 +76,7 @@ type Handler struct {
 	createBlob        CreateBlobUseCase
 	getBlobStream     GetBlobContentUseCase
 	updateBlobContent UpdateBlobContentUseCase
+	sync              SyncUseCase
 }
 
 // New создает Handler.
@@ -84,6 +90,7 @@ func New(
 	createBlob CreateBlobUseCase,
 	getBlobStream GetBlobContentUseCase,
 	updateBlobContent UpdateBlobContentUseCase,
+	sync SyncUseCase,
 ) (*Handler, error) {
 	if create == nil {
 		return nil, fmt.Errorf("%w: create", usecases.ErrEmptyDependency)
@@ -109,6 +116,9 @@ func New(
 	if updateBlobContent == nil {
 		return nil, fmt.Errorf("%w: updateBlobContent", usecases.ErrEmptyDependency)
 	}
+	if sync == nil {
+		return nil, fmt.Errorf("%w: sync", usecases.ErrEmptyDependency)
+	}
 	return &Handler{
 		logger:            logger,
 		create:            create,
@@ -119,6 +129,7 @@ func New(
 		createBlob:        createBlob,
 		getBlobStream:     getBlobStream,
 		updateBlobContent: updateBlobContent,
+		sync:              sync,
 	}, nil
 }
 
@@ -328,6 +339,27 @@ func (h *Handler) PutApiV1SecretsIdContent(
 	return secrets.PutApiV1SecretsIdContent200JSONResponse{Secret: toSecret(output)}, nil
 }
 
+// GetApiV1Sync возвращает изменения секретов пользователя для синхронизации.
+func (h *Handler) GetApiV1Sync(
+	ctx context.Context,
+	request secrets.GetApiV1SyncRequestObject,
+) (secrets.GetApiV1SyncResponseObject, error) {
+	userID, ok := middleware.UserIDFromContext(ctx)
+	if !ok {
+		return secrets.GetApiV1Sync401JSONResponse(errorResponse("unauthorized", "authorization required")), nil
+	}
+	output, err := h.sync.Execute(ctx, usecases.SyncInput{UserID: userID, Since: request.Params.Since})
+	if err != nil {
+		h.logger.Error().Err(err).Msg("sync secrets failed")
+		return secrets.GetApiV1Sync500JSONResponse(errorResponse("internal_error", "internal server error")), nil
+	}
+	return secrets.GetApiV1Sync200JSONResponse{
+		ServerTime: output.ServerTime,
+		Secrets:    toSyncSecrets(output.Secrets),
+		Deleted:    toDeletedSecrets(output.Deleted),
+	}, nil
+}
+
 func (h *Handler) createErrorResponse(err error) (secrets.PostApiV1SecretsResponseObject, error) {
 	if errors.Is(err, usecases.ErrInvalidSecretType) || errors.Is(err, usecases.ErrInvalidJSON) {
 		return secrets.PostApiV1Secrets400JSONResponse(errorResponse("validation_error", "request validation failed")), nil
@@ -530,6 +562,29 @@ func toBlob(blob usecases.BlobOutput) secrets.Blob {
 
 func ptrBlob(blob secrets.Blob) *secrets.Blob {
 	return &blob
+}
+
+func toSyncSecrets(items []usecases.SecretOutput) []secrets.Secret {
+	result := make([]secrets.Secret, 0, len(items))
+	for _, item := range items {
+		result = append(result, toSecret(item))
+	}
+	return result
+}
+
+func toDeletedSecrets(items []usecases.DeletedSecretOutput) []secrets.DeletedSecret {
+	result := make([]secrets.DeletedSecret, 0, len(items))
+	for _, item := range items {
+		result = append(
+			result,
+			secrets.DeletedSecret{
+				Id:        item.ID,
+				Version:   item.Version,
+				DeletedAt: item.DeletedAt,
+			},
+		)
+	}
+	return result
 }
 
 func errorResponse(code string, message string) secrets.ErrorResponse {

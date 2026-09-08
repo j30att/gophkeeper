@@ -32,6 +32,12 @@ FROM secrets
 WHERE user_id = $1 AND deleted_at IS NULL
 ORDER BY updated_at DESC, id DESC`
 
+	listChangedSecretsQuery = `
+SELECT id, user_id, type, name, metadata, metadata_nonce, payload, payload_nonce, blob_id, version, created_at, updated_at, deleted_at
+FROM secrets
+WHERE user_id = $1 AND (updated_at > $2 OR deleted_at > $2)
+ORDER BY updated_at ASC, id ASC`
+
 	updateSecretQuery = `
 UPDATE secrets
 SET type = $3, name = $4, metadata = $5, metadata_nonce = $6, payload = $7, payload_nonce = $8,
@@ -157,6 +163,28 @@ func (r *Repository) List(ctx context.Context, userID uuid.UUID) ([]domain.Secre
 	}
 	if err = rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate secrets: %w", err)
+	}
+	return result, nil
+}
+
+// ListChanged возвращает измененные и удаленные секреты пользователя после since.
+func (r *Repository) ListChanged(ctx context.Context, userID uuid.UUID, since time.Time) ([]domain.Secret, error) {
+	rows, err := r.pool.Query(ctx, listChangedSecretsQuery, userID, since)
+	if err != nil {
+		return nil, fmt.Errorf("select changed secrets: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]domain.Secret, 0)
+	for rows.Next() {
+		secret, err := scanSecret(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, secret)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate changed secrets: %w", err)
 	}
 	return result, nil
 }

@@ -175,6 +175,10 @@ func (testSecretsRepository) List(_ context.Context, _ uuid.UUID) ([]secretsdoma
 	return nil, nil
 }
 
+func (testSecretsRepository) ListChanged(_ context.Context, _ uuid.UUID, _ time.Time) ([]secretsdomain.Secret, error) {
+	return nil, nil
+}
+
 func (testSecretsRepository) Update(_ context.Context, _ secretsdomain.Secret, _ int) error {
 	return secretsusecases.ErrSecretNotFound
 }

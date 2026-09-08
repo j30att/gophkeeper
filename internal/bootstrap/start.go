@@ -45,6 +45,7 @@ type SecretsRepository interface {
 	Save(ctx context.Context, secret secretsdomain.Secret) error
 	Load(ctx context.Context, userID uuid.UUID, secretID uuid.UUID) (secretsdomain.Secret, error)
 	List(ctx context.Context, userID uuid.UUID) ([]secretsdomain.Secret, error)
+	ListChanged(ctx context.Context, userID uuid.UUID, since time.Time) ([]secretsdomain.Secret, error)
 	Update(ctx context.Context, secret secretsdomain.Secret, expectedVersion int) error
 	Delete(ctx context.Context, userID uuid.UUID, secretID uuid.UUID) error
 	SaveBlob(ctx context.Context, blob secretsdomain.Blob) error
@@ -163,6 +164,10 @@ func BuildRouter(
 	if err != nil {
 		return nil, fmt.Errorf("create blob content update use case: %w", err)
 	}
+	syncUseCase, err := secretsusecases.NewSyncUseCase(secretsRepository, encryptor)
+	if err != nil {
+		return nil, fmt.Errorf("create sync use case: %w", err)
+	}
 
 	secretsHandler, err := secretshandlers.New(
 		logger,
@@ -174,6 +179,7 @@ func BuildRouter(
 		createBlobUseCase,
 		getBlobContentUseCase,
 		updateBlobContentUseCase,
+		syncUseCase,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create secrets handler: %w", err)
