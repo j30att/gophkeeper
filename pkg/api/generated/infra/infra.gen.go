@@ -423,14 +423,14 @@ func (sh *strictHandler) GetOpenapiYml(w http.ResponseWriter, r *http.Request) {
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"H4sIAAAAAAAC/5RSTW/UMBD9K9HAMYpTesttBYIubdWKFqEK9eB1ZhOXxDbjSSGq8t/ROLusut0F9RI7",
-	"fm8+3pt5AuP74B06jlA9QTQt9jpdz1B33L5v0fz4gjF4F1GeA/mAxBZnPmse0o3HgFBBZLKugWnKgfDn",
-	"YAlrqL5veff5ludXD2g48SKagSyPN1J7TrtCTUiLgdvd30dPvWao4PO3W8jnTiXTjMLfzC1zgEkSW7f2",
-	"qTXLnSCffGjPEQNStrheQg6PSNF6BxWURVmcwJSDD+h0sFDBaVEWp5BD0NymppR8GmQ5xAPN1rtlLYmR",
-	"QfTOLiXyu7KUw3jH6FKIDqGzJgWphyhVt3bL7S3hGip4o3bzUJthqEOTSAJrjIZs4FnD1fls59D3mkao",
-	"NhPMjASKP7qJMgvr1qThXrhKB6seT5QeuFWdb6x0tf9O2NjISM+hiIYwLc3LR7Xq/Oow8mTr6Tiidn4J",
-	"o/Ym/sv0D4L/13jG36xa7rvnju8v7As/b37ppkHKvi6zs9vLiz1zd+gRazebVIxz4WMarmbaXd+9boVG",
-	"/WpBUmpxvczuFpcXGSEP5LDek7XlxIDGrjfFDimcpj8BAAD//9plF448BAAA",
+	"H4sIAAAAAAAC/5RSwW7bMAz9FYPb0YjS9eZbsGFr1hYt1g5DMfSgyIytzpY0iu5mBP73gbKzrGmyohdL",
+	"Jp9Ivve4AePb4B06jlBsIJoaW52uZ6gbrt/XaH58wRi8iyjhQD4gscURz5q7dOM+IBQQmayrYBhyIPzZ",
+	"WcISiu9b3H2+xfnVAxpOuIimI8v9jfQey65QE9Ki43r399FTqxkK+PztFvJxUqk0ZuFv5Zo5wCCFrVv7",
+	"NJrlRjKffKjPEQNStrheQg6PSNF6BwXMZ/PZCQw5+IBOBwsFnM7ms1PIIWiu01BKPhWyHKKBZuvdspTC",
+	"yCB8R5US+N18LofxjtGlJzqExpr0SD1E6bqVW25vCddQwBu180NNZqhDTiSCJUZDNvDI4ep8lLNrW009",
+	"FJODmZGHoo+uonhh3Zo03AtW6WDV44nSHdeq8ZWVqfbjhJWNjPQ0FdEQpqV5HlSrxq8OZza2HI5n1E6v",
+	"fxG9M1Ok9Cb+z4YPkn/RCsbfrGpum6ce7K/wM4VvfumqQsq+LrOz28uLPbl32SNiT7s168fGxzhcjbC7",
+	"tnndUvX61YSk1eJ6md0tLi8yQu7IYblHa4uJAY1dT80OMRyGPwEAAP///fhthE4EAAA=",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

@@ -141,6 +141,20 @@ curl -s http://127.0.0.1:8080/api/v1/secrets \
   -H "Authorization: Bearer ${TOKEN}"
 ```
 
+Получить изменения для синхронизации:
+
+```bash
+curl -s 'http://127.0.0.1:8080/api/v1/sync?since=2026-09-08T00:00:00Z' \
+  -H "Authorization: Bearer ${TOKEN}"
+```
+
+Если `since` не передавать, сервер вернет полный snapshot активных секретов:
+
+```bash
+curl -s http://127.0.0.1:8080/api/v1/sync \
+  -H "Authorization: Bearer ${TOKEN}"
+```
+
 Обновить structured-секрет:
 
 ```bash

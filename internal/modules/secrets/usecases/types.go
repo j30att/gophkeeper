@@ -16,6 +16,7 @@ type Repository interface {
 	Save(ctx context.Context, secret domain.Secret) error
 	Load(ctx context.Context, userID uuid.UUID, secretID uuid.UUID) (domain.Secret, error)
 	List(ctx context.Context, userID uuid.UUID) ([]domain.Secret, error)
+	ListChanged(ctx context.Context, userID uuid.UUID, since time.Time) ([]domain.Secret, error)
 	Update(ctx context.Context, secret domain.Secret, expectedVersion int) error
 	Delete(ctx context.Context, userID uuid.UUID, secretID uuid.UUID) error
 	SaveBlob(ctx context.Context, blob domain.Blob) error
@@ -81,6 +82,12 @@ type UpdateSecretInput struct {
 	ExpectedVersion int
 }
 
+// SyncInput содержит параметры синхронизации секретов.
+type SyncInput struct {
+	UserID uuid.UUID
+	Since  *time.Time
+}
+
 // SecretOutput содержит расшифрованный JSON-секрет.
 type SecretOutput struct {
 	ID        uuid.UUID         `json:"id"`
@@ -93,6 +100,20 @@ type SecretOutput struct {
 	Version   int               `json:"version"`
 	CreatedAt time.Time         `json:"created_at"`
 	UpdatedAt time.Time         `json:"updated_at"`
+}
+
+// DeletedSecretOutput содержит tombstone удаленного секрета.
+type DeletedSecretOutput struct {
+	ID        uuid.UUID `json:"id"`
+	Version   int       `json:"version"`
+	DeletedAt time.Time `json:"deleted_at"`
+}
+
+// SyncOutput содержит изменения секретов пользователя.
+type SyncOutput struct {
+	ServerTime time.Time
+	Secrets    []SecretOutput
+	Deleted    []DeletedSecretOutput
 }
 
 // BlobOutput содержит пользовательскую мету blob-файла.

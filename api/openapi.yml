@@ -434,6 +434,45 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/sync:
+    get:
+      tags: ["secrets"]
+      summary: Return secret changes since timestamp
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+          description: Client sync timestamp. Empty value means full active snapshot.
+      responses:
+        "200":
+          description: Changes returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
 components:
   parameters:
@@ -668,6 +707,39 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/SecretListItem"
+    DeletedSecret:
+      type: object
+      required:
+        - id
+        - version
+        - deleted_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        version:
+          type: integer
+        deleted_at:
+          type: string
+          format: date-time
+    SyncResponse:
+      type: object
+      required:
+        - server_time
+        - secrets
+        - deleted
+      properties:
+        server_time:
+          type: string
+          format: date-time
+        secrets:
+          type: array
+          items:
+            $ref: "#/components/schemas/Secret"
+        deleted:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeletedSecret"
     ErrorResponse:
       type: object
       required:

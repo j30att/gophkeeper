@@ -30,6 +30,7 @@ type repositoryMock struct {
 	deletedBlobID uuid.UUID
 	cleanupBlobs  []domain.Blob
 	storageBlobID uuid.UUID
+	changed       []domain.Secret
 }
 
 func (m *repositoryMock) Save(_ context.Context, secret domain.Secret) error {
@@ -43,6 +44,10 @@ func (m *repositoryMock) Load(_ context.Context, _ uuid.UUID, _ uuid.UUID) (doma
 
 func (m *repositoryMock) List(_ context.Context, _ uuid.UUID) ([]domain.Secret, error) {
 	return m.secrets, m.err
+}
+
+func (m *repositoryMock) ListChanged(_ context.Context, _ uuid.UUID, _ time.Time) ([]domain.Secret, error) {
+	return m.changed, m.err
 }
 
 func (m *repositoryMock) Update(_ context.Context, secret domain.Secret, expectedVersion int) error {
@@ -463,6 +468,42 @@ func TestUseCases(t *testing.T) {
 
 					require.NoError(t, err)
 					assert.True(t, repository.deleted)
+				},
+			)
+
+			t.Run(
+				"Должен вернуть полный sync snapshot", func(t *testing.T) {
+					useCase, err := NewSyncUseCase(&repositoryMock{secrets: []domain.Secret{secret}}, &encryptorMock{})
+					require.NoError(t, err)
+
+					output, err := useCase.Execute(context.Background(), SyncInput{UserID: userID})
+
+					require.NoError(t, err)
+					require.Len(t, output.Secrets, 1)
+					assert.Empty(t, output.Deleted)
+					assert.JSONEq(t, `{"login":"igor"}`, string(output.Secrets[0].Payload))
+					assert.False(t, output.ServerTime.IsZero())
+				},
+			)
+
+			t.Run(
+				"Должен вернуть инкрементальный sync с tombstone", func(t *testing.T) {
+					deleted := secret
+					deleted.ID = uuid.New()
+					deletedAt := time.Now().UTC()
+					deleted.DeletedAt = &deletedAt
+					since := time.Now().Add(-time.Minute).UTC()
+					useCase, err := NewSyncUseCase(&repositoryMock{changed: []domain.Secret{secret, deleted}}, &encryptorMock{})
+					require.NoError(t, err)
+
+					output, err := useCase.Execute(context.Background(), SyncInput{UserID: userID, Since: &since})
+
+					require.NoError(t, err)
+					require.Len(t, output.Secrets, 1)
+					require.Len(t, output.Deleted, 1)
+					assert.Equal(t, deleted.ID, output.Deleted[0].ID)
+					assert.Equal(t, deleted.Version, output.Deleted[0].Version)
+					assert.Equal(t, deletedAt, output.Deleted[0].DeletedAt)
 				},
 			)
 		},
