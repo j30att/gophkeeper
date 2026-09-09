@@ -23,6 +23,8 @@ const (
 	screenAuth screen = iota
 	screenList
 	screenView
+	screenConfirmDelete
+	screenConfirmLogout
 	screenCreate
 	screenUpdate
 	screenCreateBlob
@@ -33,7 +35,6 @@ const (
 const (
 	authFieldLogin = iota
 	authFieldPassword
-	authFieldMode
 )
 
 const (
@@ -146,7 +147,7 @@ func New(apiClient APIClient, store SessionStore, cacheStore ...CacheStore) Mode
 	createInputs := []textinput.Model{
 		newInput("type"),
 		newInput("name"),
-		newInput(`metadata JSON, например {"site":"github"}`),
+		newInput("description, можно пусто"),
 		newInput("login / card number"),
 		newPasswordInput("password / holder"),
 		newInput("expires_at"),
@@ -158,7 +159,7 @@ func New(apiClient APIClient, store SessionStore, cacheStore ...CacheStore) Mode
 	updateInputs := []textinput.Model{
 		newInput("type"),
 		newInput("name"),
-		newInput(`metadata JSON, например {"site":"github"}`),
+		newInput("description, можно пусто"),
 		newInput("login / card number"),
 		newPasswordInput("password / holder"),
 		newInput("expires_at"),
@@ -170,12 +171,12 @@ func New(apiClient APIClient, store SessionStore, cacheStore ...CacheStore) Mode
 	blobInputs := []textinput.Model{
 		newInput("type: text или binary"),
 		newInput("name"),
-		newInput(`metadata JSON, например {"kind":"document"}`),
+		newInput("description, можно пусто"),
 		newInput("file path"),
 		newInput("content-type, можно пусто"),
 	}
 	blobInputs[0].SetValue(string(api.SecretTypeBinary))
-	blobInputs[0].Focus()
+	blobInputs[blobFieldName].Focus()
 
 	downloadInputs := []textinput.Model{
 		newInput("save path, можно пусто"),
@@ -193,6 +194,7 @@ func New(apiClient APIClient, store SessionStore, cacheStore ...CacheStore) Mode
 	secretsList.Title = "Secrets"
 	secretsList.SetShowStatusBar(false)
 	secretsList.SetFilteringEnabled(false)
+	secretsList.DisableQuitKeybindings()
 
 	var localCache CacheStore
 	if len(cacheStore) > 0 {

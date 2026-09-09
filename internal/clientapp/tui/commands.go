@@ -15,11 +15,11 @@ import (
 
 func loadSessionCmd(store SessionStore) tea.Cmd {
 	return func() tea.Msg {
-		session, err := store.Load()
+		localSession, err := store.Load()
 		if err != nil {
 			return sessionLoadedMsg{err: err}
 		}
-		return sessionLoadedMsg{token: session.Token}
+		return sessionLoadedMsg{token: localSession.Token}
 	}
 }
 
@@ -111,11 +111,11 @@ func updateCmd(client APIClient, token string, id uuid.UUID, input api.SecretInp
 	}
 }
 
-func createBlobCmd(client APIClient, token string, input api.BlobSecretInput, close func() error) tea.Cmd {
+func createBlobCmd(client APIClient, token string, input api.BlobSecretInput, closeFile func() error) tea.Cmd {
 	return func() tea.Msg {
 		defer func() {
-			if close != nil {
-				_ = close()
+			if closeFile != nil {
+				_ = closeFile()
 			}
 		}()
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -125,11 +125,11 @@ func createBlobCmd(client APIClient, token string, input api.BlobSecretInput, cl
 	}
 }
 
-func downloadBlobCmd(client APIClient, token string, id uuid.UUID, path string, close func() error, file *os.File) tea.Cmd {
+func downloadBlobCmd(client APIClient, token string, id uuid.UUID, path string, closeFile func() error, file *os.File) tea.Cmd {
 	return func() tea.Msg {
 		defer func() {
-			if close != nil {
-				_ = close()
+			if closeFile != nil {
+				_ = closeFile()
 			}
 		}()
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -139,11 +139,11 @@ func downloadBlobCmd(client APIClient, token string, id uuid.UUID, path string, 
 	}
 }
 
-func updateBlobCmd(client APIClient, token string, id uuid.UUID, input api.BlobContentInput, close func() error) tea.Cmd {
+func updateBlobCmd(client APIClient, token string, id uuid.UUID, input api.BlobContentInput, closeFile func() error) tea.Cmd {
 	return func() tea.Msg {
 		defer func() {
-			if close != nil {
-				_ = close()
+			if closeFile != nil {
+				_ = closeFile()
 			}
 		}()
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -157,6 +157,6 @@ func deleteCmd(client APIClient, token string, id uuid.UUID) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		return deleteDoneMsg{err: client.DeleteSecret(ctx, token, id)}
+		return deleteDoneMsg{id: id, err: client.DeleteSecret(ctx, token, id)}
 	}
 }

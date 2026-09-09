@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"github.com/google/uuid"
+
 	"github.com/igor/gophkeeper/internal/clientapp/api"
 	"github.com/igor/gophkeeper/internal/clientapp/cache"
 )
@@ -55,5 +57,6 @@ type logoutDoneMsg struct {
 }
 
 type deleteDoneMsg struct {
+	id  uuid.UUID
 	err error
 }
