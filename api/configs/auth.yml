@@ -1,0 +1,9 @@
+package: auth
+generate:
+  models: true
+  chi-server: true
+  embedded-spec: true
+  strict-server: true
+output-options:
+  include-tags:
+    - auth
