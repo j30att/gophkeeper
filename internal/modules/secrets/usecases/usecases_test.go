@@ -509,3 +509,267 @@ func TestUseCases(t *testing.T) {
 		},
 	)
 }
+
+func TestUseCaseErrors(t *testing.T) {
+	t.Run("Должен валидировать пустые зависимости constructors", func(t *testing.T) {
+		testCases := []struct {
+			name string
+			call func() error
+		}{
+			{name: "create repository", call: func() error { _, err := NewCreateUseCase(nil, &encryptorMock{}); return err }},
+			{name: "create encryptor", call: func() error { _, err := NewCreateUseCase(&repositoryMock{}, nil); return err }},
+			{name: "list repository", call: func() error { _, err := NewListUseCase(nil, &encryptorMock{}); return err }},
+			{name: "list encryptor", call: func() error { _, err := NewListUseCase(&repositoryMock{}, nil); return err }},
+			{name: "get repository", call: func() error { _, err := NewGetUseCase(nil, &encryptorMock{}); return err }},
+			{name: "get encryptor", call: func() error { _, err := NewGetUseCase(&repositoryMock{}, nil); return err }},
+			{name: "update repository", call: func() error { _, err := NewUpdateUseCase(nil, &encryptorMock{}); return err }},
+			{name: "update encryptor", call: func() error { _, err := NewUpdateUseCase(&repositoryMock{}, nil); return err }},
+			{name: "delete repository", call: func() error { _, err := NewDeleteUseCase(nil); return err }},
+			{name: "sync repository", call: func() error { _, err := NewSyncUseCase(nil, &encryptorMock{}); return err }},
+			{name: "sync encryptor", call: func() error { _, err := NewSyncUseCase(&repositoryMock{}, nil); return err }},
+			{name: "create blob repository", call: func() error { _, err := NewCreateBlobUseCase(nil, &encryptorMock{}, &storageMock{}); return err }},
+			{name: "create blob encryptor", call: func() error { _, err := NewCreateBlobUseCase(&repositoryMock{}, nil, &storageMock{}); return err }},
+			{name: "create blob storage", call: func() error { _, err := NewCreateBlobUseCase(&repositoryMock{}, &encryptorMock{}, nil); return err }},
+			{name: "get blob repository", call: func() error { _, err := NewGetBlobContentUseCase(nil, &encryptorMock{}, &storageMock{}); return err }},
+			{name: "get blob encryptor", call: func() error { _, err := NewGetBlobContentUseCase(&repositoryMock{}, nil, &storageMock{}); return err }},
+			{name: "get blob storage", call: func() error { _, err := NewGetBlobContentUseCase(&repositoryMock{}, &encryptorMock{}, nil); return err }},
+			{name: "update blob repository", call: func() error { _, err := NewUpdateBlobContentUseCase(nil, &encryptorMock{}, &storageMock{}); return err }},
+			{name: "update blob encryptor", call: func() error {
+				_, err := NewUpdateBlobContentUseCase(&repositoryMock{}, nil, &storageMock{})
+				return err
+			}},
+			{name: "update blob storage", call: func() error {
+				_, err := NewUpdateBlobContentUseCase(&repositoryMock{}, &encryptorMock{}, nil)
+				return err
+			}},
+			{name: "cleanup repository", call: func() error { _, err := NewCleanupBlobsUseCase(nil, &storageMock{}); return err }},
+			{name: "cleanup storage", call: func() error { _, err := NewCleanupBlobsUseCase(&repositoryMock{}, nil); return err }},
+		}
+		for _, testCase := range testCases {
+			t.Run(testCase.name, func(t *testing.T) {
+				err := testCase.call()
+
+				require.Error(t, err)
+				assert.ErrorIs(t, err, ErrEmptyDependency)
+			})
+		}
+	})
+
+	t.Run("Должен вернуть ошибку create при ошибке encrypt metadata", func(t *testing.T) {
+		useCase, err := NewCreateUseCase(&repositoryMock{}, &encryptorMock{err: assert.AnError})
+		require.NoError(t, err)
+
+		_, err = useCase.Execute(
+			context.Background(),
+			SecretInput{
+				Type:     domain.SecretTypeCredentials,
+				Metadata: json.RawMessage(`{}`),
+				Payload:  json.RawMessage(`{"login":"igor","password":"secret"}`),
+			},
+		)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "encrypt metadata")
+	})
+
+	t.Run("Должен вернуть ошибку create при ошибке save", func(t *testing.T) {
+		useCase, err := NewCreateUseCase(&repositoryMock{err: assert.AnError}, &encryptorMock{})
+		require.NoError(t, err)
+
+		_, err = useCase.Execute(
+			context.Background(),
+			SecretInput{
+				Type:     domain.SecretTypeCredentials,
+				Metadata: json.RawMessage(`{}`),
+				Payload:  json.RawMessage(`{"login":"igor","password":"secret"}`),
+			},
+		)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "save secret")
+	})
+
+	t.Run("Должен вернуть ошибку create blob при пустом content", func(t *testing.T) {
+		useCase, err := NewCreateBlobUseCase(&repositoryMock{}, &encryptorMock{}, &storageMock{})
+		require.NoError(t, err)
+
+		_, err = useCase.Execute(context.Background(), BlobSecretInput{Type: domain.SecretTypeText})
+
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrEmptyContent)
+	})
+
+	t.Run("Должен вернуть ошибку create blob при ошибке storage save", func(t *testing.T) {
+		useCase, err := NewCreateBlobUseCase(&repositoryMock{}, &encryptorMock{}, &storageMock{err: assert.AnError})
+		require.NoError(t, err)
+
+		_, err = useCase.Execute(
+			context.Background(),
+			BlobSecretInput{
+				Type:    domain.SecretTypeText,
+				Content: strings.NewReader("content"),
+			},
+		)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "save blob content")
+	})
+
+	t.Run("Должен вернуть ошибку create blob при ошибке save blob metadata", func(t *testing.T) {
+		useCase, err := NewCreateBlobUseCase(&repositoryMock{blobErr: assert.AnError}, &encryptorMock{}, &storageMock{})
+		require.NoError(t, err)
+
+		_, err = useCase.Execute(
+			context.Background(),
+			BlobSecretInput{
+				Type:    domain.SecretTypeText,
+				Content: strings.NewReader("content"),
+			},
+		)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "save blob metadata")
+	})
+
+	t.Run("Должен вернуть ошибку get при ошибке load", func(t *testing.T) {
+		useCase, err := NewGetUseCase(&repositoryMock{err: assert.AnError}, &encryptorMock{})
+		require.NoError(t, err)
+
+		_, err = useCase.Execute(context.Background(), uuid.New(), uuid.New())
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "load secret")
+	})
+
+	t.Run("Должен вернуть ошибку get при ошибке decrypt", func(t *testing.T) {
+		useCase, err := NewGetUseCase(&repositoryMock{secret: domain.Secret{Type: domain.SecretTypeCredentials}}, &encryptorMock{err: assert.AnError})
+		require.NoError(t, err)
+
+		_, err = useCase.Execute(context.Background(), uuid.New(), uuid.New())
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "decrypt metadata")
+	})
+
+	t.Run("Должен вернуть ошибку list при ошибке repository", func(t *testing.T) {
+		useCase, err := NewListUseCase(&repositoryMock{err: assert.AnError}, &encryptorMock{})
+		require.NoError(t, err)
+
+		_, err = useCase.Execute(context.Background(), uuid.New())
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "list secrets")
+	})
+
+	t.Run("Должен вернуть ошибку update без expected version", func(t *testing.T) {
+		useCase, err := NewUpdateUseCase(&repositoryMock{}, &encryptorMock{})
+		require.NoError(t, err)
+
+		_, err = useCase.Execute(context.Background(), UpdateSecretInput{ExpectedVersion: 0})
+
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrSecretVersionConflict)
+	})
+
+	t.Run("Должен вернуть ошибку update при ошибке repository update", func(t *testing.T) {
+		secret := domain.Secret{ID: uuid.New(), UserID: uuid.New(), Type: domain.SecretTypeCredentials, Version: 1}
+		useCase, err := NewUpdateUseCase(&repositoryMock{secret: secret, err: assert.AnError}, &encryptorMock{})
+		require.NoError(t, err)
+
+		_, err = useCase.Execute(
+			context.Background(),
+			UpdateSecretInput{
+				UserID:          secret.UserID,
+				ID:              secret.ID,
+				Type:            domain.SecretTypeCredentials,
+				Payload:         json.RawMessage(`{"login":"igor","password":"secret"}`),
+				ExpectedVersion: 1,
+			},
+		)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "load secret")
+	})
+
+	t.Run("Должен вернуть ошибку delete", func(t *testing.T) {
+		useCase, err := NewDeleteUseCase(&repositoryMock{err: assert.AnError})
+		require.NoError(t, err)
+
+		err = useCase.Execute(context.Background(), uuid.New(), uuid.New())
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "delete secret")
+	})
+
+	t.Run("Должен вернуть ошибку sync при ошибке repository", func(t *testing.T) {
+		useCase, err := NewSyncUseCase(&repositoryMock{err: assert.AnError}, &encryptorMock{})
+		require.NoError(t, err)
+
+		_, err = useCase.Execute(context.Background(), SyncInput{UserID: uuid.New()})
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "list sync secrets")
+	})
+
+	t.Run("Должен вернуть ошибку get blob content при ошибке open", func(t *testing.T) {
+		useCase, err := NewGetBlobContentUseCase(&repositoryMock{blob: domain.Blob{StorageName: "file.gpk"}}, &encryptorMock{}, &storageMock{err: assert.AnError})
+		require.NoError(t, err)
+
+		_, err = useCase.Execute(context.Background(), uuid.New(), uuid.New())
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "open blob content")
+	})
+
+	t.Run("Должен вернуть ошибку update blob без expected version", func(t *testing.T) {
+		useCase, err := NewUpdateBlobContentUseCase(&repositoryMock{}, &encryptorMock{}, &storageMock{})
+		require.NoError(t, err)
+
+		_, err = useCase.Execute(context.Background(), BlobContentInput{ExpectedVersion: 0, Content: strings.NewReader("content")})
+
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrSecretVersionConflict)
+	})
+
+	t.Run("Должен вернуть ошибку update blob без content", func(t *testing.T) {
+		useCase, err := NewUpdateBlobContentUseCase(&repositoryMock{}, &encryptorMock{}, &storageMock{})
+		require.NoError(t, err)
+
+		_, err = useCase.Execute(context.Background(), BlobContentInput{ExpectedVersion: 1})
+
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrEmptyContent)
+	})
+
+	t.Run("Должен вернуть ошибку update blob для structured secret", func(t *testing.T) {
+		useCase, err := NewUpdateBlobContentUseCase(
+			&repositoryMock{secret: domain.Secret{Type: domain.SecretTypeCredentials, Version: 1}},
+			&encryptorMock{},
+			&storageMock{},
+		)
+		require.NoError(t, err)
+
+		_, err = useCase.Execute(
+			context.Background(),
+			BlobContentInput{ExpectedVersion: 1, Content: strings.NewReader("content")},
+		)
+
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidSecretType)
+	})
+
+	t.Run("Должен вернуть ошибку cleanup при ошибке storage delete", func(t *testing.T) {
+		blob := domain.Blob{ID: uuid.New(), UserID: uuid.New(), StorageName: "old.gpk"}
+		useCase, err := NewCleanupBlobsUseCase(
+			&repositoryMock{cleanupBlobs: []domain.Blob{blob}},
+			&storageMock{err: assert.AnError},
+		)
+		require.NoError(t, err)
+
+		output, err := useCase.Execute(context.Background(), CleanupBlobsInput{})
+
+		require.Error(t, err)
+		assert.Zero(t, output.Deleted)
+		assert.Contains(t, err.Error(), "delete blob content")
+	})
+}

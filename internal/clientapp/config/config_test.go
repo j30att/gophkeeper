@@ -15,6 +15,8 @@ func TestLoad(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "http://localhost:9090", cfg.ServerURL)
 		assert.Contains(t, cfg.SessionPath, ".gophkeeper")
+		assert.Contains(t, cfg.SecretsPath, ".gophkeeper")
+		assert.Contains(t, cfg.SecretsPath, "secrets.json")
 	})
 
 	t.Run("Должен использовать server URL из environment", func(t *testing.T) {

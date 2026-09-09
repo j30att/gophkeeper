@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"strings"
 	"time"
 
@@ -80,6 +82,24 @@ type SecretInput struct {
 	ExpectedVersion int                    `json:"expected_version,omitempty"`
 }
 
+// BlobSecretInput описывает файл для создания blob-секрета.
+type BlobSecretInput struct {
+	Type         SecretType
+	Name         string
+	Metadata     string
+	OriginalName string
+	ContentType  string
+	Content      io.Reader
+}
+
+// BlobContentInput описывает файл для замены содержимого blob-секрета.
+type BlobContentInput struct {
+	ExpectedVersion int
+	OriginalName    string
+	ContentType     string
+	Content         io.Reader
+}
+
 // NewClient создает HTTP API client.
 func NewClient(baseURL string, httpClient *http.Client) (*Client, error) {
 	if strings.TrimSpace(baseURL) == "" {
@@ -148,6 +168,67 @@ func (c *Client) CreateSecret(ctx context.Context, token string, input SecretInp
 	return response.Secret, nil
 }
 
+// UpdateSecret обновляет structured-секрет.
+func (c *Client) UpdateSecret(ctx context.Context, token string, id uuid.UUID, input SecretInput) (Secret, error) {
+	var response struct {
+		Secret Secret `json:"secret"`
+	}
+	if err := c.doJSON(ctx, http.MethodPut, "/api/v1/secrets/"+id.String(), token, input, &response); err != nil {
+		return Secret{}, err
+	}
+	return response.Secret, nil
+}
+
+// CreateBlobSecret создает blob-секрет через multipart upload.
+func (c *Client) CreateBlobSecret(ctx context.Context, token string, input BlobSecretInput) (Secret, error) {
+	var response struct {
+		Secret Secret `json:"secret"`
+	}
+	if err := c.doMultipart(ctx, http.MethodPost, "/api/v1/secrets/blob", token, map[string]string{
+		"type":     string(input.Type),
+		"name":     input.Name,
+		"metadata": input.Metadata,
+	}, "file", input.OriginalName, input.ContentType, input.Content, &response); err != nil {
+		return Secret{}, err
+	}
+	return response.Secret, nil
+}
+
+// DownloadBlobContent скачивает содержимое blob-секрета в writer.
+func (c *Client) DownloadBlobContent(ctx context.Context, token string, id uuid.UUID, writer io.Writer) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/v1/secrets/"+id.String()+"/content", nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("send request: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return decodeAPIError(response)
+	}
+	if _, err = io.Copy(writer, response.Body); err != nil {
+		return fmt.Errorf("write blob content: %w", err)
+	}
+	return nil
+}
+
+// UpdateBlobContent заменяет содержимое blob-секрета через multipart upload.
+func (c *Client) UpdateBlobContent(ctx context.Context, token string, id uuid.UUID, input BlobContentInput) (Secret, error) {
+	var response struct {
+		Secret Secret `json:"secret"`
+	}
+	if err := c.doMultipart(ctx, http.MethodPut, "/api/v1/secrets/"+id.String()+"/content", token, map[string]string{
+		"expected_version": fmt.Sprintf("%d", input.ExpectedVersion),
+	}, "file", input.OriginalName, input.ContentType, input.Content, &response); err != nil {
+		return Secret{}, err
+	}
+	return response.Secret, nil
+}
+
 // DeleteSecret удаляет секрет.
 func (c *Client) DeleteSecret(ctx context.Context, token string, id uuid.UUID) error {
 	return c.doJSON(ctx, http.MethodDelete, "/api/v1/secrets/"+id.String(), token, nil, nil)
@@ -187,6 +268,88 @@ func (c *Client) doJSON(ctx context.Context, method string, path string, token s
 		return fmt.Errorf("send request: %w", err)
 	}
 	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return decodeAPIError(response)
+	}
+	if output == nil || response.StatusCode == http.StatusNoContent {
+		return nil
+	}
+	if err = json.NewDecoder(response.Body).Decode(output); err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+	return nil
+}
+
+func (c *Client) doMultipart(
+	ctx context.Context,
+	method string,
+	path string,
+	token string,
+	fields map[string]string,
+	fileField string,
+	fileName string,
+	contentType string,
+	content io.Reader,
+	output any,
+) error {
+	if content == nil {
+		return fmt.Errorf("empty file content")
+	}
+	reader, writer := io.Pipe()
+	multipartWriter := multipart.NewWriter(writer)
+	writeErr := make(chan error, 1)
+	go func() {
+		defer close(writeErr)
+		for name, value := range fields {
+			if err := multipartWriter.WriteField(name, value); err != nil {
+				_ = writer.CloseWithError(err)
+				writeErr <- err
+				return
+			}
+		}
+		header := make(textproto.MIMEHeader)
+		header.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%s"; filename="%s"`, fileField, fileName))
+		if strings.TrimSpace(contentType) == "" {
+			contentType = "application/octet-stream"
+		}
+		header.Set("Content-Type", contentType)
+		part, err := multipartWriter.CreatePart(header)
+		if err != nil {
+			_ = writer.CloseWithError(err)
+			writeErr <- err
+			return
+		}
+		if _, err = io.Copy(part, content); err != nil {
+			_ = writer.CloseWithError(err)
+			writeErr <- err
+			return
+		}
+		if err = multipartWriter.Close(); err != nil {
+			_ = writer.CloseWithError(err)
+			writeErr <- err
+			return
+		}
+		writeErr <- writer.Close()
+	}()
+
+	request, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
+	if err != nil {
+		_ = reader.Close()
+		return fmt.Errorf("create request: %w", err)
+	}
+	request.Header.Set("Content-Type", multipartWriter.FormDataContentType())
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		_ = reader.Close()
+		return fmt.Errorf("send request: %w", err)
+	}
+	defer response.Body.Close()
+	if err = <-writeErr; err != nil {
+		return fmt.Errorf("write multipart request: %w", err)
+	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return decodeAPIError(response)
 	}

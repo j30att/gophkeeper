@@ -2,12 +2,14 @@ package tui
 
 import (
 	"context"
+	"os"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/google/uuid"
 
 	"github.com/igor/gophkeeper/internal/clientapp/api"
+	"github.com/igor/gophkeeper/internal/clientapp/cache"
 	"github.com/igor/gophkeeper/internal/clientapp/session"
 )
 
@@ -21,6 +23,25 @@ func loadSessionCmd(store SessionStore) tea.Cmd {
 	}
 }
 
+func loadCacheCmd(store CacheStore) tea.Cmd {
+	return func() tea.Msg {
+		if store == nil {
+			return cacheLoadedMsg{}
+		}
+		localCache, err := store.Load()
+		return cacheLoadedMsg{cache: localCache, err: err}
+	}
+}
+
+func saveCacheCmd(store CacheStore, localCache cache.Cache) tea.Cmd {
+	return func() tea.Msg {
+		if store == nil {
+			return cacheSavedMsg{}
+		}
+		return cacheSavedMsg{err: store.Save(localCache)}
+	}
+}
+
 func saveSessionCmd(store SessionStore, token string, next tea.Cmd) tea.Cmd {
 	return tea.Batch(
 		func() tea.Msg {
@@ -31,6 +52,22 @@ func saveSessionCmd(store SessionStore, token string, next tea.Cmd) tea.Cmd {
 		},
 		next,
 	)
+}
+
+func logoutCmd(store SessionStore, cacheStore CacheStore) tea.Cmd {
+	return func() tea.Msg {
+		if store != nil {
+			if err := store.Delete(); err != nil {
+				return logoutDoneMsg{err: err}
+			}
+		}
+		if cacheStore != nil {
+			if err := cacheStore.Delete(); err != nil {
+				return logoutDoneMsg{err: err}
+			}
+		}
+		return logoutDoneMsg{}
+	}
 }
 
 func authCmd(client APIClient, login string, password string, register bool) tea.Cmd {
@@ -62,6 +99,57 @@ func createCmd(client APIClient, token string, input api.SecretInput) tea.Cmd {
 		defer cancel()
 		_, err := client.CreateSecret(ctx, token, input)
 		return createDoneMsg{err: err}
+	}
+}
+
+func updateCmd(client APIClient, token string, id uuid.UUID, input api.SecretInput) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_, err := client.UpdateSecret(ctx, token, id, input)
+		return updateDoneMsg{err: err}
+	}
+}
+
+func createBlobCmd(client APIClient, token string, input api.BlobSecretInput, close func() error) tea.Cmd {
+	return func() tea.Msg {
+		defer func() {
+			if close != nil {
+				_ = close()
+			}
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_, err := client.CreateBlobSecret(ctx, token, input)
+		return createBlobDoneMsg{err: err}
+	}
+}
+
+func downloadBlobCmd(client APIClient, token string, id uuid.UUID, path string, close func() error, file *os.File) tea.Cmd {
+	return func() tea.Msg {
+		defer func() {
+			if close != nil {
+				_ = close()
+			}
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		err := client.DownloadBlobContent(ctx, token, id, file)
+		return downloadBlobDoneMsg{path: path, err: err}
+	}
+}
+
+func updateBlobCmd(client APIClient, token string, id uuid.UUID, input api.BlobContentInput, close func() error) tea.Cmd {
+	return func() tea.Msg {
+		defer func() {
+			if close != nil {
+				_ = close()
+			}
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_, err := client.UpdateBlobContent(ctx, token, id, input)
+		return updateBlobDoneMsg{err: err}
 	}
 }
 

@@ -67,3 +67,11 @@ func (s *Store) Load() (Session, error) {
 	}
 	return session, nil
 }
+
+// Delete удаляет сохраненную сессию с диска.
+func (s *Store) Delete() error {
+	if err := os.Remove(s.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("delete session: %w", err)
+	}
+	return nil
+}

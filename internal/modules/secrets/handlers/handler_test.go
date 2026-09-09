@@ -193,6 +193,51 @@ func TestHandlerNew(t *testing.T) {
 			assert.ErrorIs(t, err, usecases.ErrEmptyDependency)
 		},
 	)
+
+	t.Run(
+		"Должен вернуть ошибку при любой пустой зависимости", func(t *testing.T) {
+			testCases := []struct {
+				name              string
+				create            CreateUseCase
+				list              ListUseCase
+				get               GetUseCase
+				update            UpdateUseCase
+				delete            DeleteUseCase
+				createBlob        CreateBlobUseCase
+				getBlobStream     GetBlobContentUseCase
+				updateBlobContent UpdateBlobContentUseCase
+				sync              SyncUseCase
+			}{
+				{name: "list", create: &createUseCaseMock{}, get: &getUseCaseMock{}, update: &updateUseCaseMock{}, delete: &deleteUseCaseMock{}, createBlob: &createBlobUseCaseMock{}, getBlobStream: &getBlobContentUseCaseMock{}, updateBlobContent: &updateBlobContentUseCaseMock{}, sync: &syncUseCaseMock{}},
+				{name: "get", create: &createUseCaseMock{}, list: &listUseCaseMock{}, update: &updateUseCaseMock{}, delete: &deleteUseCaseMock{}, createBlob: &createBlobUseCaseMock{}, getBlobStream: &getBlobContentUseCaseMock{}, updateBlobContent: &updateBlobContentUseCaseMock{}, sync: &syncUseCaseMock{}},
+				{name: "update", create: &createUseCaseMock{}, list: &listUseCaseMock{}, get: &getUseCaseMock{}, delete: &deleteUseCaseMock{}, createBlob: &createBlobUseCaseMock{}, getBlobStream: &getBlobContentUseCaseMock{}, updateBlobContent: &updateBlobContentUseCaseMock{}, sync: &syncUseCaseMock{}},
+				{name: "delete", create: &createUseCaseMock{}, list: &listUseCaseMock{}, get: &getUseCaseMock{}, update: &updateUseCaseMock{}, createBlob: &createBlobUseCaseMock{}, getBlobStream: &getBlobContentUseCaseMock{}, updateBlobContent: &updateBlobContentUseCaseMock{}, sync: &syncUseCaseMock{}},
+				{name: "createBlob", create: &createUseCaseMock{}, list: &listUseCaseMock{}, get: &getUseCaseMock{}, update: &updateUseCaseMock{}, delete: &deleteUseCaseMock{}, getBlobStream: &getBlobContentUseCaseMock{}, updateBlobContent: &updateBlobContentUseCaseMock{}, sync: &syncUseCaseMock{}},
+				{name: "getBlobStream", create: &createUseCaseMock{}, list: &listUseCaseMock{}, get: &getUseCaseMock{}, update: &updateUseCaseMock{}, delete: &deleteUseCaseMock{}, createBlob: &createBlobUseCaseMock{}, updateBlobContent: &updateBlobContentUseCaseMock{}, sync: &syncUseCaseMock{}},
+				{name: "updateBlobContent", create: &createUseCaseMock{}, list: &listUseCaseMock{}, get: &getUseCaseMock{}, update: &updateUseCaseMock{}, delete: &deleteUseCaseMock{}, createBlob: &createBlobUseCaseMock{}, getBlobStream: &getBlobContentUseCaseMock{}, sync: &syncUseCaseMock{}},
+				{name: "sync", create: &createUseCaseMock{}, list: &listUseCaseMock{}, get: &getUseCaseMock{}, update: &updateUseCaseMock{}, delete: &deleteUseCaseMock{}, createBlob: &createBlobUseCaseMock{}, getBlobStream: &getBlobContentUseCaseMock{}, updateBlobContent: &updateBlobContentUseCaseMock{}},
+			}
+			for _, testCase := range testCases {
+				t.Run(testCase.name, func(t *testing.T) {
+					_, err := New(
+						zerolog.Nop(),
+						testCase.create,
+						testCase.list,
+						testCase.get,
+						testCase.update,
+						testCase.delete,
+						testCase.createBlob,
+						testCase.getBlobStream,
+						testCase.updateBlobContent,
+						testCase.sync,
+					)
+
+					require.Error(t, err)
+					assert.ErrorIs(t, err, usecases.ErrEmptyDependency)
+				})
+			}
+		},
+	)
 }
 
 func TestHandlerPostApiV1Secrets(t *testing.T) {
@@ -263,6 +308,22 @@ func TestHandlerPostApiV1Secrets(t *testing.T) {
 			require.Equal(t, http.StatusBadRequest, recorder.Code)
 		},
 	)
+
+	t.Run(
+		"Должен вернуть 500 при внутренней ошибке create", func(t *testing.T) {
+			router := newTestRouter(t, uuid.New(), &createUseCaseMock{err: assert.AnError}, nil, nil, nil, nil, nil, nil, nil)
+			request := newJSONRequest(t, http.MethodPost, "/api/v1/secrets", map[string]any{
+				"type":    "credentials",
+				"name":    "github",
+				"payload": map[string]any{"login": "igor"},
+			})
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, request)
+
+			require.Equal(t, http.StatusInternalServerError, recorder.Code)
+		},
+	)
 }
 
 func TestHandlerPostApiV1SecretsBlob(t *testing.T) {
@@ -310,6 +371,51 @@ func TestHandlerPostApiV1SecretsBlob(t *testing.T) {
 			assert.JSONEq(t, `{"kind":"book"}`, string(createBlobUseCase.input.Metadata))
 		},
 	)
+
+	t.Run(
+		"Должен вернуть 400 без файла", func(t *testing.T) {
+			router := newTestRouter(t, uuid.New(), nil, nil, nil, nil, nil, &createBlobUseCaseMock{}, nil, nil)
+			request := newMultipartRequestWithoutFile(t, "/api/v1/secrets/blob", map[string]string{
+				"type": "text",
+				"name": "note",
+			})
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, request)
+
+			require.Equal(t, http.StatusBadRequest, recorder.Code)
+		},
+	)
+
+	t.Run(
+		"Должен вернуть 400 при validation error usecase", func(t *testing.T) {
+			router := newTestRouter(t, uuid.New(), nil, nil, nil, nil, nil, &createBlobUseCaseMock{err: usecases.ErrEmptyContent}, nil, nil)
+			request := newMultipartRequest(t, "/api/v1/secrets/blob", map[string]string{
+				"type": "text",
+				"name": "note",
+			}, "file", "note.txt", "text/plain", "")
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, request)
+
+			require.Equal(t, http.StatusBadRequest, recorder.Code)
+		},
+	)
+
+	t.Run(
+		"Должен вернуть 500 при внутренней ошибке create blob", func(t *testing.T) {
+			router := newTestRouter(t, uuid.New(), nil, nil, nil, nil, nil, &createBlobUseCaseMock{err: assert.AnError}, nil, nil)
+			request := newMultipartRequest(t, "/api/v1/secrets/blob", map[string]string{
+				"type": "text",
+				"name": "note",
+			}, "file", "note.txt", "text/plain", "content")
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, request)
+
+			require.Equal(t, http.StatusInternalServerError, recorder.Code)
+		},
+	)
 }
 
 func TestHandlerGetApiV1Secrets(t *testing.T) {
@@ -343,6 +449,19 @@ func TestHandlerGetApiV1Secrets(t *testing.T) {
 			require.NoError(t, json.NewDecoder(recorder.Body).Decode(&response))
 			require.Len(t, response.Secrets, 1)
 			assert.Equal(t, "github", response.Secrets[0].Name)
+		},
+	)
+
+	t.Run(
+		"Должен вернуть 500 при ошибке списка", func(t *testing.T) {
+			router := newTestRouter(t, uuid.New(), nil, &listUseCaseMock{err: assert.AnError}, nil, nil, nil, nil, nil, nil)
+			request := httptest.NewRequest(http.MethodGet, "/api/v1/secrets", nil)
+			request.Header.Set("Authorization", "Bearer token")
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, request)
+
+			require.Equal(t, http.StatusInternalServerError, recorder.Code)
 		},
 	)
 }
@@ -402,6 +521,19 @@ func TestHandlerGetApiV1SecretsId(t *testing.T) {
 			require.Equal(t, http.StatusNotFound, recorder.Code)
 		},
 	)
+
+	t.Run(
+		"Должен вернуть 500 при внутренней ошибке get", func(t *testing.T) {
+			router := newTestRouter(t, uuid.New(), nil, nil, &getUseCaseMock{err: assert.AnError}, nil, nil, nil, nil, nil)
+			request := httptest.NewRequest(http.MethodGet, "/api/v1/secrets/"+uuid.NewString(), nil)
+			request.Header.Set("Authorization", "Bearer token")
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, request)
+
+			require.Equal(t, http.StatusInternalServerError, recorder.Code)
+		},
+	)
 }
 
 func TestHandlerPutApiV1SecretsId(t *testing.T) {
@@ -442,6 +574,90 @@ func TestHandlerPutApiV1SecretsId(t *testing.T) {
 			assert.JSONEq(t, `{"number":"1234"}`, string(updateUseCase.input.Payload))
 		},
 	)
+
+	t.Run(
+		"Должен вернуть 400 без expected_version", func(t *testing.T) {
+			router := newTestRouter(t, uuid.New(), nil, nil, nil, &updateUseCaseMock{}, nil, nil, nil, nil)
+			request := newJSONRequest(t, http.MethodPut, "/api/v1/secrets/"+uuid.NewString(), map[string]any{
+				"type":    "card",
+				"name":    "card",
+				"payload": map[string]any{"number": "1234"},
+			})
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, request)
+
+			require.Equal(t, http.StatusBadRequest, recorder.Code)
+		},
+	)
+
+	t.Run(
+		"Должен вернуть 404 при update not found", func(t *testing.T) {
+			router := newTestRouter(t, uuid.New(), nil, nil, nil, &updateUseCaseMock{err: usecases.ErrSecretNotFound}, nil, nil, nil, nil)
+			request := newJSONRequest(t, http.MethodPut, "/api/v1/secrets/"+uuid.NewString(), map[string]any{
+				"type":             "card",
+				"name":             "card",
+				"expected_version": 1,
+				"payload":          map[string]any{"number": "1234"},
+			})
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, request)
+
+			require.Equal(t, http.StatusNotFound, recorder.Code)
+		},
+	)
+
+	t.Run(
+		"Должен вернуть 409 при update conflict", func(t *testing.T) {
+			router := newTestRouter(t, uuid.New(), nil, nil, nil, &updateUseCaseMock{err: usecases.ErrSecretVersionConflict}, nil, nil, nil, nil)
+			request := newJSONRequest(t, http.MethodPut, "/api/v1/secrets/"+uuid.NewString(), map[string]any{
+				"type":             "card",
+				"name":             "card",
+				"expected_version": 1,
+				"payload":          map[string]any{"number": "1234"},
+			})
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, request)
+
+			require.Equal(t, http.StatusConflict, recorder.Code)
+		},
+	)
+
+	t.Run(
+		"Должен вернуть 400 при update validation error", func(t *testing.T) {
+			router := newTestRouter(t, uuid.New(), nil, nil, nil, &updateUseCaseMock{err: usecases.ErrInvalidSecretType}, nil, nil, nil, nil)
+			request := newJSONRequest(t, http.MethodPut, "/api/v1/secrets/"+uuid.NewString(), map[string]any{
+				"type":             "binary",
+				"name":             "file",
+				"expected_version": 1,
+				"payload":          map[string]any{},
+			})
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, request)
+
+			require.Equal(t, http.StatusBadRequest, recorder.Code)
+		},
+	)
+
+	t.Run(
+		"Должен вернуть 500 при update internal error", func(t *testing.T) {
+			router := newTestRouter(t, uuid.New(), nil, nil, nil, &updateUseCaseMock{err: assert.AnError}, nil, nil, nil, nil)
+			request := newJSONRequest(t, http.MethodPut, "/api/v1/secrets/"+uuid.NewString(), map[string]any{
+				"type":             "card",
+				"name":             "card",
+				"expected_version": 1,
+				"payload":          map[string]any{"number": "1234"},
+			})
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, request)
+
+			require.Equal(t, http.StatusInternalServerError, recorder.Code)
+		},
+	)
 }
 
 func TestHandlerDeleteApiV1SecretsId(t *testing.T) {
@@ -460,6 +676,32 @@ func TestHandlerDeleteApiV1SecretsId(t *testing.T) {
 			require.Equal(t, http.StatusNoContent, recorder.Code)
 			assert.Equal(t, userID, deleteUseCase.userID)
 			assert.Equal(t, secretID, deleteUseCase.secretID)
+		},
+	)
+
+	t.Run(
+		"Должен вернуть 404 при delete not found", func(t *testing.T) {
+			router := newTestRouter(t, uuid.New(), nil, nil, nil, nil, &deleteUseCaseMock{err: usecases.ErrSecretNotFound}, nil, nil, nil)
+			request := httptest.NewRequest(http.MethodDelete, "/api/v1/secrets/"+uuid.NewString(), nil)
+			request.Header.Set("Authorization", "Bearer token")
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, request)
+
+			require.Equal(t, http.StatusNotFound, recorder.Code)
+		},
+	)
+
+	t.Run(
+		"Должен вернуть 500 при delete internal error", func(t *testing.T) {
+			router := newTestRouter(t, uuid.New(), nil, nil, nil, nil, &deleteUseCaseMock{err: assert.AnError}, nil, nil, nil)
+			request := httptest.NewRequest(http.MethodDelete, "/api/v1/secrets/"+uuid.NewString(), nil)
+			request.Header.Set("Authorization", "Bearer token")
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, request)
+
+			require.Equal(t, http.StatusInternalServerError, recorder.Code)
 		},
 	)
 }
@@ -490,6 +732,32 @@ func TestHandlerGetApiV1SecretsIdContent(t *testing.T) {
 			assert.Equal(t, "content", recorder.Body.String())
 			assert.Equal(t, userID, getBlobContentUseCase.userID)
 			assert.Equal(t, secretID, getBlobContentUseCase.secretID)
+		},
+	)
+
+	t.Run(
+		"Должен вернуть 404 при отсутствующем blob", func(t *testing.T) {
+			router := newTestRouter(t, uuid.New(), nil, nil, nil, nil, nil, nil, &getBlobContentUseCaseMock{err: usecases.ErrBlobNotFound}, nil)
+			request := httptest.NewRequest(http.MethodGet, "/api/v1/secrets/"+uuid.NewString()+"/content", nil)
+			request.Header.Set("Authorization", "Bearer token")
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, request)
+
+			require.Equal(t, http.StatusNotFound, recorder.Code)
+		},
+	)
+
+	t.Run(
+		"Должен вернуть 500 при ошибке чтения blob", func(t *testing.T) {
+			router := newTestRouter(t, uuid.New(), nil, nil, nil, nil, nil, nil, &getBlobContentUseCaseMock{err: assert.AnError}, nil)
+			request := httptest.NewRequest(http.MethodGet, "/api/v1/secrets/"+uuid.NewString()+"/content", nil)
+			request.Header.Set("Authorization", "Bearer token")
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, request)
+
+			require.Equal(t, http.StatusInternalServerError, recorder.Code)
 		},
 	)
 }
@@ -564,6 +832,64 @@ func TestHandlerPutApiV1SecretsIdContent(t *testing.T) {
 			require.Equal(t, http.StatusConflict, recorder.Code)
 		},
 	)
+
+	t.Run(
+		"Должен вернуть 400 без expected_version", func(t *testing.T) {
+			router := newTestRouter(t, uuid.New(), nil, nil, nil, nil, nil, nil, nil, &updateBlobContentUseCaseMock{})
+			request := newMultipartRequest(t, "/api/v1/secrets/"+uuid.NewString()+"/content", nil, "file", "note.txt", "text/plain", "new content")
+			request.Method = http.MethodPut
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, request)
+
+			require.Equal(t, http.StatusBadRequest, recorder.Code)
+		},
+	)
+
+	t.Run(
+		"Должен вернуть 404 при update blob not found", func(t *testing.T) {
+			router := newTestRouter(t, uuid.New(), nil, nil, nil, nil, nil, nil, nil, &updateBlobContentUseCaseMock{err: usecases.ErrBlobNotFound})
+			request := newMultipartRequest(t, "/api/v1/secrets/"+uuid.NewString()+"/content", map[string]string{
+				"expected_version": "1",
+			}, "file", "note.txt", "text/plain", "new content")
+			request.Method = http.MethodPut
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, request)
+
+			require.Equal(t, http.StatusNotFound, recorder.Code)
+		},
+	)
+
+	t.Run(
+		"Должен вернуть 400 при нечисловом expected_version", func(t *testing.T) {
+			router := newTestRouter(t, uuid.New(), nil, nil, nil, nil, nil, nil, nil, &updateBlobContentUseCaseMock{})
+			request := newMultipartRequest(t, "/api/v1/secrets/"+uuid.NewString()+"/content", map[string]string{
+				"expected_version": "bad",
+			}, "file", "note.txt", "text/plain", "new content")
+			request.Method = http.MethodPut
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, request)
+
+			require.Equal(t, http.StatusBadRequest, recorder.Code)
+		},
+	)
+
+	t.Run(
+		"Должен вернуть 500 при update blob internal error", func(t *testing.T) {
+			router := newTestRouter(t, uuid.New(), nil, nil, nil, nil, nil, nil, nil, &updateBlobContentUseCaseMock{err: assert.AnError})
+			request := newMultipartRequest(t, "/api/v1/secrets/"+uuid.NewString()+"/content", map[string]string{
+				"expected_version": "1",
+			}, "file", "note.txt", "text/plain", "new content")
+			request.Method = http.MethodPut
+			recorder := httptest.NewRecorder()
+
+			router.ServeHTTP(recorder, request)
+
+			require.Equal(t, http.StatusInternalServerError, recorder.Code)
+		},
+	)
 }
 
 func TestHandlerGetApiV1Sync(t *testing.T) {
@@ -636,6 +962,43 @@ func TestHandlerUnauthorized(t *testing.T) {
 	router.ServeHTTP(recorder, request)
 
 	require.Equal(t, http.StatusUnauthorized, recorder.Code)
+}
+
+func TestHelpers(t *testing.T) {
+	t.Run("Должен вернуть nil raw message для nil map", func(t *testing.T) {
+		raw, err := mapToRawMessage(nil)
+
+		require.NoError(t, err)
+		assert.Nil(t, raw)
+	})
+
+	t.Run("Должен вернуть ошибку marshal map", func(t *testing.T) {
+		value := map[string]interface{}{"bad": func() {}}
+
+		_, err := mapToRawMessage(&value)
+
+		require.Error(t, err)
+	})
+
+	t.Run("Должен вернуть пустую map для пустого raw message", func(t *testing.T) {
+		assert.Empty(t, rawMessageToMap(nil))
+	})
+
+	t.Run("Должен вернуть пустую map для невалидного raw message", func(t *testing.T) {
+		assert.Empty(t, rawMessageToMap(json.RawMessage(`{`)))
+	})
+
+	t.Run("Должен вернуть ошибку для nil blob multipart", func(t *testing.T) {
+		_, err := readBlobMultipart(uuid.New(), nil)
+
+		require.Error(t, err)
+	})
+
+	t.Run("Должен вернуть ошибку для nil blob content multipart", func(t *testing.T) {
+		_, err := readBlobContentMultipart(uuid.New(), uuid.New(), nil)
+
+		require.Error(t, err)
+	})
 }
 
 func newTestRouter(
@@ -731,6 +1094,21 @@ func newMultipartRequest(
 	require.NoError(t, err)
 	_, err = part.Write([]byte(content))
 	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	request := httptest.NewRequest(http.MethodPost, target, &body)
+	request.Header.Set("Authorization", "Bearer token")
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	return request
+}
+
+func newMultipartRequestWithoutFile(t *testing.T, target string, fields map[string]string) *http.Request {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	for name, value := range fields {
+		require.NoError(t, writer.WriteField(name, value))
+	}
 	require.NoError(t, writer.Close())
 
 	request := httptest.NewRequest(http.MethodPost, target, &body)
