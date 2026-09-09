@@ -36,3 +36,17 @@ func refreshSecretsList(m *Model) {
 	}
 	m.secretsList.SetItems(items)
 }
+
+func removeSecret(m *Model, id string) {
+	secrets := make([]api.Secret, 0, len(m.secrets))
+	for _, secret := range m.secrets {
+		if secret.ID.String() != id {
+			secrets = append(secrets, secret)
+		}
+	}
+	m.secrets = secrets
+	if m.selected != nil && m.selected.ID.String() == id {
+		m.selected = nil
+	}
+	refreshSecretsList(m)
+}

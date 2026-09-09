@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -154,6 +155,8 @@ func key(message string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyCtrlC}
 	case "space":
 		return tea.KeyMsg{Type: tea.KeySpace}
+	case "shift+q":
+		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Q")}
 	default:
 		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(message)}
 	}
@@ -236,11 +239,14 @@ func TestModel(t *testing.T) {
 
 	t.Run("Должен показать auth ошибку", func(t *testing.T) {
 		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.status = "Выход выполнен"
 
 		updated, _ := model.Update(authDoneMsg{err: errors.New("bad auth")})
 		next := updated.(Model)
 
+		assert.Equal(t, screenAuth, next.screen)
 		assert.Contains(t, next.View(), "bad auth")
+		assert.NotContains(t, next.View(), "Выход выполнен")
 	})
 
 	t.Run("Должен показать ошибку sync", func(t *testing.T) {
@@ -364,15 +370,57 @@ func TestModel(t *testing.T) {
 		assert.Contains(t, next.View(), "update failed")
 	})
 
+	t.Run("Должен показать понятную ошибку при conflict", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+
+		updated, cmd := model.Update(updateDoneMsg{err: api.APIError{StatusCode: http.StatusConflict}})
+		next := updated.(Model)
+
+		assert.Nil(t, cmd)
+		assert.Contains(t, next.View(), "секрет изменился на сервере, нажми r и повтори")
+	})
+
 	t.Run("Должен обработать deleteDoneMsg", func(t *testing.T) {
+		secretID := uuid.New()
 		model := New(&apiClientMock{}, &sessionStoreMock{})
 		model.token = "jwt"
+		model.selected = &api.Secret{ID: secretID, Name: "name"}
+		applySync(&model, api.SyncResponse{
+			Secrets: []api.Secret{
+				{ID: secretID, Name: "name"},
+				{ID: uuid.New(), Name: "name2"},
+			},
+		})
 
-		updated, cmd := model.Update(deleteDoneMsg{})
+		updated, cmd := model.Update(deleteDoneMsg{id: secretID})
 		next := updated.(Model)
 
 		assert.Equal(t, screenList, next.screen)
 		assert.Equal(t, "Секрет удален", next.status)
+		assert.Nil(t, next.selected)
+		assert.Len(t, next.secrets, 1)
+		assert.Equal(t, "name2", next.secrets[0].Name)
+		assert.NotNil(t, cmd)
+	})
+
+	t.Run("Должен убрать локальный secret при delete not found", func(t *testing.T) {
+		secretID := uuid.New()
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.token = "jwt"
+		model.selected = &api.Secret{ID: secretID, Name: "name"}
+		applySync(&model, api.SyncResponse{Secrets: []api.Secret{{ID: secretID, Name: "name"}}})
+
+		updated, cmd := model.Update(deleteDoneMsg{
+			id:  secretID,
+			err: api.APIError{StatusCode: http.StatusNotFound, Code: "secret_not_found", Message: "secret not found"},
+		})
+		next := updated.(Model)
+
+		assert.Equal(t, screenList, next.screen)
+		assert.Equal(t, "Секрет уже удален", next.status)
+		assert.Empty(t, next.err)
+		assert.Nil(t, next.selected)
+		assert.Empty(t, next.secrets)
 		assert.NotNil(t, cmd)
 	})
 
@@ -410,7 +458,7 @@ func TestModel(t *testing.T) {
 		model := New(&apiClientMock{}, &sessionStoreMock{})
 		model.screen = screenView
 
-		updated, cmd := model.Update(key("q"))
+		updated, cmd := model.Update(key("shift+q"))
 		next := updated.(Model)
 
 		assert.Nil(t, cmd)
@@ -423,16 +471,63 @@ func TestModel(t *testing.T) {
 		assert.Equal(t, screenList, next.screen)
 	})
 
-	t.Run("Должен завершить приложение на q из списка", func(t *testing.T) {
+	t.Run("Должен очистить ошибку при возврате на список", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.screen = screenUpdate
+		model.err = "type должен быть credentials или card"
+
+		updated, cmd := model.Update(key("esc"))
+		next := updated.(Model)
+
+		assert.Nil(t, cmd)
+		assert.Equal(t, screenList, next.screen)
+		assert.Empty(t, next.err)
+	})
+
+	t.Run("Должен завершить приложение на shift q из списка", func(t *testing.T) {
 		model := New(&apiClientMock{}, &sessionStoreMock{})
 		model.screen = screenList
 
-		_, cmd := model.Update(key("q"))
+		_, cmd := model.Update(key("shift+q"))
 
 		assert.NotNil(t, cmd)
 	})
 
-	t.Run("Должен переключать auth focus по tab и shift tab", func(t *testing.T) {
+	t.Run("Должен игнорировать q как выход из списка", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.screen = screenList
+
+		updated, cmd := model.Update(key("q"))
+		next := updated.(Model)
+
+		assert.Nil(t, cmd)
+		assert.Equal(t, screenList, next.screen)
+	})
+
+	t.Run("Должен вводить q в auth input без выхода из приложения", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.authInputs[authFieldLogin].SetValue("i")
+
+		updated, _ := model.Update(key("q"))
+		next := updated.(Model)
+
+		assert.Equal(t, screenAuth, next.screen)
+		assert.Equal(t, "iq", next.authInputs[authFieldLogin].Value())
+	})
+
+	t.Run("Должен игнорировать esc на auth screen", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+
+		updated, cmd := model.Update(key("esc"))
+		next := updated.(Model)
+
+		assert.Nil(t, cmd)
+		assert.Equal(t, screenAuth, next.screen)
+		assert.Contains(t, next.View(), "GophKeeper")
+		assert.NotContains(t, next.View(), "GophKeeper secrets")
+	})
+
+	t.Run("Должен переключать auth focus по tab", func(t *testing.T) {
 		model := New(&apiClientMock{}, &sessionStoreMock{})
 
 		updated, _ := model.Update(key("tab"))
@@ -440,21 +535,31 @@ func TestModel(t *testing.T) {
 
 		assert.Equal(t, authFieldPassword, next.authFocus)
 
-		updated, _ = next.Update(key("shift+tab"))
+		updated, _ = next.Update(key("tab"))
 		next = updated.(Model)
 
 		assert.Equal(t, authFieldLogin, next.authFocus)
 	})
 
-	t.Run("Должен переключать режим регистрации в auth", func(t *testing.T) {
+	t.Run("Должен переключать режим регистрации в auth по shift tab", func(t *testing.T) {
 		model := New(&apiClientMock{}, &sessionStoreMock{})
-		model.authFocus = authFieldMode
 
-		updated, _ := model.Update(key("space"))
+		updated, _ := model.Update(key("shift+tab"))
 		next := updated.(Model)
 
 		assert.True(t, next.register)
 		assert.Contains(t, next.View(), "register")
+	})
+
+	t.Run("Должен вводить пробел в auth input", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.authInputs[authFieldLogin].SetValue("igor")
+
+		updated, _ := model.Update(key("space"))
+		next := updated.(Model)
+
+		assert.Equal(t, "igor ", next.authInputs[authFieldLogin].Value())
+		assert.False(t, next.register)
 	})
 
 	t.Run("Должен вернуть auth command по enter", func(t *testing.T) {
@@ -489,6 +594,68 @@ func TestModel(t *testing.T) {
 		assert.Nil(t, cmd)
 		assert.Equal(t, screenCreateBlob, next.screen)
 		assert.Contains(t, next.View(), "Создать blob secret")
+		assert.Contains(t, next.View(), "type: binary")
+		assert.Equal(t, blobFieldName, next.blobFocus)
+	})
+
+	t.Run("Должен переключать blob type по shift tab", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.screen = screenCreateBlob
+		focusBlobField(model.blobInputs, &model.blobFocus, blobFieldName)
+
+		updated, cmd := model.Update(key("shift+tab"))
+		next := updated.(Model)
+
+		assert.Nil(t, cmd)
+		assert.Equal(t, api.SecretTypeText, api.SecretType(next.blobInputs[blobFieldType].Value()))
+		assert.Equal(t, blobFieldName, next.blobFocus)
+		assert.Contains(t, next.View(), "type: text")
+
+		updated, cmd = next.Update(key("shift+tab"))
+		next = updated.(Model)
+
+		assert.Nil(t, cmd)
+		assert.Equal(t, api.SecretTypeBinary, api.SecretType(next.blobInputs[blobFieldType].Value()))
+		assert.Equal(t, blobFieldName, next.blobFocus)
+		assert.Contains(t, next.View(), "type: binary")
+	})
+
+	t.Run("Должен переключать blob focus только по редактируемым полям", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.screen = screenCreateBlob
+		focusBlobField(model.blobInputs, &model.blobFocus, blobFieldName)
+
+		updated, _ := model.Update(key("tab"))
+		next := updated.(Model)
+
+		assert.Equal(t, blobFieldMetadata, next.blobFocus)
+
+		updated, _ = next.Update(key("tab"))
+		next = updated.(Model)
+
+		assert.Equal(t, blobFieldPath, next.blobFocus)
+
+		updated, _ = next.Update(key("tab"))
+		next = updated.(Model)
+
+		assert.Equal(t, blobFieldContentType, next.blobFocus)
+
+		updated, _ = next.Update(key("tab"))
+		next = updated.(Model)
+
+		assert.Equal(t, blobFieldName, next.blobFocus)
+	})
+
+	t.Run("Должен вводить текст в blob name без изменения type", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.screen = screenCreateBlob
+		focusBlobField(model.blobInputs, &model.blobFocus, blobFieldName)
+
+		updated, _ := model.Update(key("n"))
+		next := updated.(Model)
+
+		assert.Equal(t, "n", next.blobInputs[blobFieldName].Value())
+		assert.Equal(t, api.SecretTypeBinary, api.SecretType(next.blobInputs[blobFieldType].Value()))
 	})
 
 	t.Run("Должен вернуть sync command из списка", func(t *testing.T) {
@@ -513,24 +680,74 @@ func TestModel(t *testing.T) {
 		assert.Equal(t, screenList, next.screen)
 	})
 
-	t.Run("Должен вернуть delete command для выбранного secret", func(t *testing.T) {
+	t.Run("Должен открыть подтверждение delete для выбранного secret", func(t *testing.T) {
 		secretID := uuid.New()
 		model := New(&apiClientMock{}, &sessionStoreMock{})
 		model.screen = screenList
 		applySync(&model, api.SyncResponse{Secrets: []api.Secret{{ID: secretID, Name: "github"}}})
 
-		_, cmd := model.Update(key("d"))
+		updated, cmd := model.Update(key("d"))
+		next := updated.(Model)
+
+		assert.Nil(t, cmd)
+		assert.Equal(t, screenConfirmDelete, next.screen)
+		assert.Contains(t, next.View(), "Удалить secret?")
+		assert.Equal(t, secretID, next.selected.ID)
+	})
+
+	t.Run("Должен подтвердить delete", func(t *testing.T) {
+		secretID := uuid.New()
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.screen = screenConfirmDelete
+		model.selected = &api.Secret{ID: secretID, Name: "github"}
+
+		_, cmd := model.Update(key("y"))
 
 		assert.NotNil(t, cmd)
 	})
 
-	t.Run("Должен вернуть logout command из списка", func(t *testing.T) {
+	t.Run("Должен отменить delete", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.screen = screenConfirmDelete
+		model.selected = &api.Secret{ID: uuid.New(), Name: "github"}
+
+		updated, cmd := model.Update(key("n"))
+		next := updated.(Model)
+
+		assert.Nil(t, cmd)
+		assert.Equal(t, screenList, next.screen)
+	})
+
+	t.Run("Должен открыть подтверждение logout из списка", func(t *testing.T) {
 		model := New(&apiClientMock{}, &sessionStoreMock{}, &cacheStoreMock{})
 		model.screen = screenList
 
-		_, cmd := model.Update(key("l"))
+		updated, cmd := model.Update(key("l"))
+		next := updated.(Model)
+
+		assert.Nil(t, cmd)
+		assert.Equal(t, screenConfirmLogout, next.screen)
+		assert.Contains(t, next.View(), "Выйти из клиента?")
+	})
+
+	t.Run("Должен подтвердить logout", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{}, &cacheStoreMock{})
+		model.screen = screenConfirmLogout
+
+		_, cmd := model.Update(key("y"))
 
 		assert.NotNil(t, cmd)
+	})
+
+	t.Run("Должен отменить logout", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{}, &cacheStoreMock{})
+		model.screen = screenConfirmLogout
+
+		updated, cmd := model.Update(key("n"))
+		next := updated.(Model)
+
+		assert.Nil(t, cmd)
+		assert.Equal(t, screenList, next.screen)
 	})
 
 	t.Run("Должен выполнить logout command", func(t *testing.T) {
@@ -585,10 +802,43 @@ func TestModel(t *testing.T) {
 
 		assert.Equal(t, createFieldName, next.createFocus)
 
+		updated, _ = next.Update(key("tab"))
+		next = updated.(Model)
+
+		assert.Equal(t, createFieldMetadata, next.createFocus)
+	})
+
+	t.Run("Должен переключать create type по shift tab", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.screen = screenCreate
+
+		updated, _ := model.Update(key("shift+tab"))
+		next := updated.(Model)
+
+		assert.Equal(t, "card", next.createInputs[createFieldType].Value())
+		assert.Contains(t, next.View(), "card number")
+		assert.Contains(t, next.View(), "holder")
+
 		updated, _ = next.Update(key("shift+tab"))
 		next = updated.(Model)
 
-		assert.Equal(t, createFieldType, next.createFocus)
+		assert.Equal(t, "credentials", next.createInputs[createFieldType].Value())
+		assert.Contains(t, next.View(), "login")
+		assert.NotContains(t, next.View(), "card number")
+		assert.NotContains(t, next.View(), "cvv:")
+	})
+
+	t.Run("Должен вводить пробел в create input", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.screen = screenCreate
+		focusStructuredField(model.createInputs, &model.createFocus, createFieldMetadata)
+		model.createInputs[createFieldMetadata].SetValue("Какая")
+
+		updated, _ := model.Update(key("space"))
+		next := updated.(Model)
+
+		assert.Equal(t, "Какая ", next.createInputs[createFieldMetadata].Value())
+		assert.Equal(t, "credentials", next.createInputs[createFieldType].Value())
 	})
 
 	t.Run("Должен вернуть create command по enter", func(t *testing.T) {
@@ -623,10 +873,35 @@ func TestModel(t *testing.T) {
 
 		assert.Equal(t, createFieldName, next.updateFocus)
 
-		updated, _ = next.Update(key("shift+tab"))
+		updated, _ = next.Update(key("tab"))
 		next = updated.(Model)
 
-		assert.Equal(t, createFieldType, next.updateFocus)
+		assert.Equal(t, createFieldMetadata, next.updateFocus)
+	})
+
+	t.Run("Должен переключать update type по shift tab", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.screen = screenUpdate
+		model.updateInputs[createFieldType].SetValue("credentials")
+
+		updated, _ := model.Update(key("shift+tab"))
+		next := updated.(Model)
+
+		assert.Equal(t, "card", next.updateInputs[createFieldType].Value())
+		assert.Contains(t, next.View(), "card number")
+	})
+
+	t.Run("Должен вводить пробел в update input", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.screen = screenUpdate
+		focusStructuredField(model.updateInputs, &model.updateFocus, createFieldName)
+		model.updateInputs[createFieldName].SetValue("Моя")
+
+		updated, _ := model.Update(key("space"))
+		next := updated.(Model)
+
+		assert.Equal(t, "Моя ", next.updateInputs[createFieldName].Value())
+		assert.Equal(t, "credentials", next.updateInputs[createFieldType].Value())
 	})
 
 	t.Run("Должен вернуть update command по enter", func(t *testing.T) {
@@ -696,6 +971,26 @@ func TestModel(t *testing.T) {
 		assert.Equal(t, "igor", next.updateInputs[createFieldFirst].Value())
 	})
 
+	t.Run("Должен очистить старую ошибку при открытии update screen", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.screen = screenView
+		model.err = "выбранный секрет не является structured"
+		model.selected = &api.Secret{
+			ID:      uuid.New(),
+			Name:    "github",
+			Type:    api.SecretTypeCredentials,
+			Payload: map[string]interface{}{"login": "igor", "password": "secret"},
+		}
+
+		updated, cmd := model.Update(key("e"))
+		next := updated.(Model)
+
+		assert.Nil(t, cmd)
+		assert.Equal(t, screenUpdate, next.screen)
+		assert.Empty(t, next.err)
+		assert.NotContains(t, next.View(), "выбранный секрет не является structured")
+	})
+
 	t.Run("Должен показать ошибку update для blob", func(t *testing.T) {
 		model := New(&apiClientMock{}, &sessionStoreMock{})
 		model.screen = screenView
@@ -744,9 +1039,9 @@ func TestModel(t *testing.T) {
 		model.blobInputs[blobFieldPath].SetValue(path)
 		model.blobInputs[blobFieldContentType].SetValue("text/plain")
 
-		input, close, err := model.blobSecretInput()
+		input, closeFile, err := model.blobSecretInput()
 		require.NoError(t, err)
-		defer close()
+		defer closeFile()
 		content, err := io.ReadAll(input.Content)
 
 		require.NoError(t, err)
@@ -755,6 +1050,22 @@ func TestModel(t *testing.T) {
 		assert.Equal(t, "note.txt", input.OriginalName)
 		assert.Equal(t, "text/plain", input.ContentType)
 		assert.Equal(t, "content", string(content))
+	})
+
+	t.Run("Должен собрать blob description как metadata JSON", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "note.txt")
+		require.NoError(t, os.WriteFile(path, []byte("content"), 0o600))
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.blobInputs[blobFieldType].SetValue("text")
+		model.blobInputs[blobFieldMetadata].SetValue("note description")
+		model.blobInputs[blobFieldPath].SetValue(path)
+
+		input, closeFile, err := model.blobSecretInput()
+		require.NoError(t, err)
+		defer closeFile()
+
+		assert.JSONEq(t, `{"description":"note description"}`, input.Metadata)
 	})
 
 	t.Run("Должен вернуть ошибку blob input без файла", func(t *testing.T) {
@@ -902,7 +1213,29 @@ func TestModel(t *testing.T) {
 		require.Error(t, err)
 	})
 
-	t.Run("Должен вернуть ошибку при неверном metadata JSON", func(t *testing.T) {
+	t.Run("Должен сохранить простой текст как description metadata", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.createInputs[createFieldType].SetValue("credentials")
+		model.createInputs[createFieldMetadata].SetValue("tstcard")
+
+		input, err := model.createSecretInput()
+
+		require.NoError(t, err)
+		assert.Equal(t, "tstcard", input.Metadata["description"])
+	})
+
+	t.Run("Должен сохранить JSON object как расширенный description metadata", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.createInputs[createFieldType].SetValue("credentials")
+		model.createInputs[createFieldMetadata].SetValue(`{"site":"github"}`)
+
+		input, err := model.createSecretInput()
+
+		require.NoError(t, err)
+		assert.Equal(t, "github", input.Metadata["site"])
+	})
+
+	t.Run("Должен вернуть ошибку при неверном description JSON", func(t *testing.T) {
 		model := New(&apiClientMock{}, &sessionStoreMock{})
 		model.createInputs[createFieldType].SetValue("credentials")
 		model.createInputs[createFieldMetadata].SetValue("{")
@@ -910,6 +1243,23 @@ func TestModel(t *testing.T) {
 		_, err := model.createSecretInput()
 
 		require.Error(t, err)
+		assert.Contains(t, err.Error(), `description должен быть обычным текстом или JSON object, например {"description":"work"}`)
+	})
+
+	t.Run("Должен очистить status при ошибке формы создания", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.screen = screenCreate
+		model.status = "Список обновлен"
+		model.createInputs[createFieldType].SetValue("credentials")
+		model.createInputs[createFieldMetadata].SetValue("{")
+
+		updated, cmd := model.Update(key("enter"))
+		next := updated.(Model)
+
+		assert.Nil(t, cmd)
+		assert.Empty(t, next.status)
+		assert.Contains(t, next.View(), `description должен быть обычным текстом или JSON object, например {"description":"work"}`)
+		assert.NotContains(t, next.View(), "Список обновлен")
 	})
 
 	t.Run("Должен выполнить auth command", func(t *testing.T) {
@@ -951,6 +1301,7 @@ func TestModel(t *testing.T) {
 
 		done := message.(deleteDoneMsg)
 		require.NoError(t, done.err)
+		assert.Equal(t, secretID, done.id)
 		assert.Equal(t, secretID, client.deletedID)
 	})
 
@@ -969,15 +1320,20 @@ func TestModel(t *testing.T) {
 		assert.Contains(t, model.View(), "Секрет не выбран")
 	})
 
-	t.Run("Должен отрисовать blob metadata", func(t *testing.T) {
+	t.Run("Должен отрисовать blob description", func(t *testing.T) {
 		model := New(&apiClientMock{}, &sessionStoreMock{})
 		model.screen = screenView
 		model.selected = &api.Secret{
 			Name: "file",
 			Type: api.SecretTypeBinary,
+			Metadata: map[string]interface{}{
+				"description": "Документ",
+			},
 			Blob: &api.Blob{OriginalName: "doc.pdf", Size: 128},
 		}
 
+		assert.Contains(t, model.View(), "description:")
+		assert.Contains(t, model.View(), "Документ")
 		assert.Contains(t, model.View(), "doc.pdf, 128 bytes")
 	})
 
@@ -990,6 +1346,8 @@ func TestModel(t *testing.T) {
 
 		assert.Contains(t, view, "GophKeeper secrets")
 		assert.Contains(t, view, "enter - открыть")
+		assert.Contains(t, view, "shift+q - выход")
+		assert.NotContains(t, view, "q quit")
 	})
 
 	t.Run("Должен вернуть описание и filter value для list item", func(t *testing.T) {

@@ -73,6 +73,24 @@ type SyncResponse struct {
 	Deleted    []DeletedSecret `json:"deleted"`
 }
 
+// APIError описывает ошибку, которую вернул сервер.
+type APIError struct {
+	StatusCode int
+	Code       string
+	Message    string
+}
+
+// Error возвращает текст ошибки API.
+func (e APIError) Error() string {
+	if e.Message == "" {
+		return fmt.Sprintf("api error: status %d", e.StatusCode)
+	}
+	if e.Code == "" {
+		return fmt.Sprintf("api error: %s", e.Message)
+	}
+	return fmt.Sprintf("api error: %s: %s", e.Code, e.Message)
+}
+
 // SecretInput описывает structured-секрет для создания или обновления.
 type SecretInput struct {
 	Type            SecretType             `json:"type"`
@@ -207,8 +225,8 @@ func (c *Client) DownloadBlobContent(ctx context.Context, token string, id uuid.
 		return fmt.Errorf("send request: %w", err)
 	}
 	defer response.Body.Close()
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return decodeAPIError(response)
+	if err = ensureSuccessStatus(response); err != nil {
+		return err
 	}
 	if _, err = io.Copy(writer, response.Body); err != nil {
 		return fmt.Errorf("write blob content: %w", err)
@@ -268,16 +286,7 @@ func (c *Client) doJSON(ctx context.Context, method string, path string, token s
 		return fmt.Errorf("send request: %w", err)
 	}
 	defer response.Body.Close()
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return decodeAPIError(response)
-	}
-	if output == nil || response.StatusCode == http.StatusNoContent {
-		return nil
-	}
-	if err = json.NewDecoder(response.Body).Decode(output); err != nil {
-		return fmt.Errorf("decode response: %w", err)
-	}
-	return nil
+	return decodeResponse(response, output)
 }
 
 func (c *Client) doMultipart(
@@ -350,14 +359,25 @@ func (c *Client) doMultipart(
 	if err = <-writeErr; err != nil {
 		return fmt.Errorf("write multipart request: %w", err)
 	}
+	return decodeResponse(response, output)
+}
+
+func decodeResponse(response *http.Response, output any) error {
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return decodeAPIError(response)
 	}
 	if output == nil || response.StatusCode == http.StatusNoContent {
 		return nil
 	}
-	if err = json.NewDecoder(response.Body).Decode(output); err != nil {
+	if err := json.NewDecoder(response.Body).Decode(output); err != nil {
 		return fmt.Errorf("decode response: %w", err)
+	}
+	return nil
+}
+
+func ensureSuccessStatus(response *http.Response) error {
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return decodeAPIError(response)
 	}
 	return nil
 }
@@ -370,10 +390,10 @@ func decodeAPIError(response *http.Response) error {
 		} `json:"error"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&apiError); err != nil {
-		return fmt.Errorf("api error: status %d", response.StatusCode)
+		return APIError{StatusCode: response.StatusCode}
 	}
 	if apiError.Error.Message == "" {
-		return fmt.Errorf("api error: status %d", response.StatusCode)
+		return APIError{StatusCode: response.StatusCode, Code: apiError.Error.Code}
 	}
-	return fmt.Errorf("api error: %s: %s", apiError.Error.Code, apiError.Error.Message)
+	return APIError{StatusCode: response.StatusCode, Code: apiError.Error.Code, Message: apiError.Error.Message}
 }

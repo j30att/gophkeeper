@@ -18,8 +18,7 @@ func resetCreate(m *Model) {
 		m.createInputs[index].Blur()
 	}
 	m.createInputs[0].SetValue(string(api.SecretTypeCredentials))
-	m.createFocus = 0
-	m.createInputs[0].Focus()
+	focusStructuredField(m.createInputs, &m.createFocus, createFieldName)
 }
 
 func resetCreateBlob(m *Model) {
@@ -28,8 +27,7 @@ func resetCreateBlob(m *Model) {
 		m.blobInputs[index].Blur()
 	}
 	m.blobInputs[blobFieldType].SetValue(string(api.SecretTypeBinary))
-	m.blobFocus = 0
-	m.blobInputs[0].Focus()
+	focusBlobField(m.blobInputs, &m.blobFocus, blobFieldName)
 }
 
 func resetUpdate(m *Model) {
@@ -37,11 +35,10 @@ func resetUpdate(m *Model) {
 		m.updateInputs[index].SetValue("")
 		m.updateInputs[index].Blur()
 	}
-	m.updateFocus = 0
 	if m.selected != nil {
 		m.fillStructuredInputs(m.updateInputs, *m.selected)
 	}
-	m.updateInputs[0].Focus()
+	focusStructuredField(m.updateInputs, &m.updateFocus, createFieldName)
 }
 
 func resetDownloadBlob(m *Model) {
@@ -82,11 +79,9 @@ func structuredSecretInput(inputs []textinput.Model, expectedVersion int) (api.S
 	if secretType != api.SecretTypeCredentials && secretType != api.SecretTypeCard {
 		return api.SecretInput{}, fmt.Errorf("type должен быть credentials или card")
 	}
-	metadata := make(map[string]interface{})
-	if value := strings.TrimSpace(inputs[createFieldMetadata].Value()); value != "" {
-		if err := json.Unmarshal([]byte(value), &metadata); err != nil {
-			return api.SecretInput{}, fmt.Errorf("metadata должен быть JSON object: %w", err)
-		}
+	metadata, err := descriptionMetadata(inputs[createFieldMetadata].Value())
+	if err != nil {
+		return api.SecretInput{}, err
 	}
 	payload := map[string]interface{}{}
 	if secretType == api.SecretTypeCredentials {
@@ -107,10 +102,139 @@ func structuredSecretInput(inputs []textinput.Model, expectedVersion int) (api.S
 	}, nil
 }
 
+func structuredInputLabels(inputs []textinput.Model) []string {
+	labels := []string{
+		"type",
+		"name",
+		"description",
+		"login",
+		"password",
+		"expires_at",
+		"cvv",
+	}
+	if len(inputs) == 0 {
+		return labels
+	}
+	if api.SecretType(strings.TrimSpace(inputs[createFieldType].Value())) == api.SecretTypeCard {
+		labels[createFieldFirst] = "card number"
+		labels[createFieldSecond] = "holder"
+		labels[createFieldThird] = "expires_at"
+		labels[createFieldFourth] = "cvv"
+		return labels
+	}
+	labels[createFieldThird] = "expires_at (только card)"
+	labels[createFieldFourth] = "cvv (только card)"
+	return labels
+}
+
+func visibleStructuredFields(inputs []textinput.Model) []int {
+	if api.SecretType(strings.TrimSpace(inputs[createFieldType].Value())) == api.SecretTypeCard {
+		return []int{
+			createFieldType,
+			createFieldName,
+			createFieldMetadata,
+			createFieldFirst,
+			createFieldSecond,
+			createFieldThird,
+			createFieldFourth,
+		}
+	}
+	return []int{
+		createFieldType,
+		createFieldName,
+		createFieldMetadata,
+		createFieldFirst,
+		createFieldSecond,
+	}
+}
+
+func focusStructuredField(inputs []textinput.Model, current *int, field int) {
+	for index := range inputs {
+		inputs[index].Blur()
+	}
+	*current = field
+	inputs[*current].Focus()
+}
+
+func moveStructuredFocus(inputs []textinput.Model, current *int, backward bool) {
+	fields := visibleStructuredFields(inputs)
+	position := 0
+	for index, field := range fields {
+		if field == *current {
+			position = index
+			break
+		}
+	}
+	if backward {
+		position--
+		if position < 0 {
+			position = len(fields) - 1
+		}
+	} else {
+		position++
+		if position >= len(fields) {
+			position = 0
+		}
+	}
+	focusStructuredField(inputs, current, fields[position])
+}
+
+func toggleStructuredType(inputs []textinput.Model, current *int) {
+	if api.SecretType(strings.TrimSpace(inputs[createFieldType].Value())) == api.SecretTypeCard {
+		inputs[createFieldType].SetValue(string(api.SecretTypeCredentials))
+		if *current == createFieldThird || *current == createFieldFourth {
+			focusStructuredField(inputs, current, createFieldFirst)
+		}
+		return
+	}
+	inputs[createFieldType].SetValue(string(api.SecretTypeCard))
+}
+
+func visibleBlobFields() []int {
+	return []int{
+		blobFieldName,
+		blobFieldMetadata,
+		blobFieldPath,
+		blobFieldContentType,
+	}
+}
+
+func focusBlobField(inputs []textinput.Model, current *int, field int) {
+	for index := range inputs {
+		inputs[index].Blur()
+	}
+	*current = field
+	inputs[*current].Focus()
+}
+
+func moveBlobFocus(inputs []textinput.Model, current *int) {
+	fields := visibleBlobFields()
+	position := 0
+	for index, field := range fields {
+		if field == *current {
+			position = index
+			break
+		}
+	}
+	position++
+	if position >= len(fields) {
+		position = 0
+	}
+	focusBlobField(inputs, current, fields[position])
+}
+
+func toggleBlobType(inputs []textinput.Model) {
+	if api.SecretType(strings.TrimSpace(inputs[blobFieldType].Value())) == api.SecretTypeText {
+		inputs[blobFieldType].SetValue(string(api.SecretTypeBinary))
+		return
+	}
+	inputs[blobFieldType].SetValue(string(api.SecretTypeText))
+}
+
 func (m Model) fillStructuredInputs(inputs []textinput.Model, secret api.Secret) {
 	inputs[createFieldType].SetValue(string(secret.Type))
 	inputs[createFieldName].SetValue(secret.Name)
-	inputs[createFieldMetadata].SetValue(formatMap(secret.Metadata))
+	inputs[createFieldMetadata].SetValue(formatDescriptionMetadata(secret.Metadata))
 	if secret.Type == api.SecretTypeCredentials {
 		inputs[createFieldFirst].SetValue(stringValue(secret.Payload, "login"))
 		inputs[createFieldSecond].SetValue(stringValue(secret.Payload, "password"))
@@ -150,7 +274,7 @@ func (m Model) blobSecretInput() (api.BlobSecretInput, func() error, error) {
 	return api.BlobSecretInput{
 		Type:         secretType,
 		Name:         name,
-		Metadata:     strings.TrimSpace(m.blobInputs[blobFieldMetadata].Value()),
+		Metadata:     blobMetadata(m.blobInputs[blobFieldMetadata].Value()),
 		OriginalName: filepath.Base(path),
 		ContentType:  strings.TrimSpace(m.blobInputs[blobFieldContentType].Value()),
 		Content:      file,
@@ -212,4 +336,46 @@ func formatMap(value map[string]interface{}) string {
 		return "{}"
 	}
 	return string(payload)
+}
+
+func descriptionMetadata(value string) (map[string]interface{}, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return map[string]interface{}{}, nil
+	}
+	if !strings.HasPrefix(value, "{") {
+		return map[string]interface{}{"description": value}, nil
+	}
+	var metadata map[string]interface{}
+	if err := json.Unmarshal([]byte(value), &metadata); err != nil {
+		return nil, fmt.Errorf(`description должен быть обычным текстом или JSON object, например {"description":"work"}`)
+	}
+	return metadata, nil
+}
+
+func blobMetadata(value string) string {
+	metadata, err := descriptionMetadata(value)
+	if err != nil {
+		return strings.TrimSpace(value)
+	}
+	if len(metadata) == 0 {
+		return ""
+	}
+	payload, err := json.Marshal(metadata)
+	if err != nil {
+		return strings.TrimSpace(value)
+	}
+	return string(payload)
+}
+
+func formatDescriptionMetadata(metadata map[string]interface{}) string {
+	if len(metadata) == 1 {
+		if description, ok := metadata["description"]; ok {
+			return fmt.Sprint(description)
+		}
+	}
+	if len(metadata) == 0 {
+		return ""
+	}
+	return formatMap(metadata)
 }

@@ -2,9 +2,12 @@ package tui
 
 import (
 	"errors"
+	"net/http"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/igor/gophkeeper/internal/clientapp/api"
 	"github.com/igor/gophkeeper/internal/clientapp/cache"
 )
 
@@ -19,13 +22,13 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case sessionLoadedMsg:
 		if msg.err == nil {
 			m.token = msg.token
-			m.screen = screenList
+			m.setScreen(screenList)
 			return m, loadCacheCmd(m.cache)
 		}
 		return m, nil
 	case cacheLoadedMsg:
 		if msg.err != nil && !errors.Is(msg.err, cache.ErrNotFound) {
-			m.err = msg.err.Error()
+			m.setError(msg.err.Error())
 		}
 		if msg.err == nil {
 			m.secrets = msg.cache.Secrets
@@ -38,22 +41,22 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, syncCmd(m.apiClient, m.token, m.lastSyncAt)
 	case cacheSavedMsg:
 		if msg.err != nil {
-			m.err = msg.err.Error()
+			m.setError(msg.err.Error())
 		}
 		return m, nil
 	case authDoneMsg:
 		if msg.err != nil {
-			m.err = msg.err.Error()
+			m.setError(msg.err.Error())
 			return m, nil
 		}
 		m.err = ""
 		m.status = "Вход выполнен"
 		m.token = msg.token
-		m.screen = screenList
+		m.setScreen(screenList)
 		return m, saveSessionCmd(m.store, msg.token, syncCmd(m.apiClient, msg.token, nil))
 	case syncDoneMsg:
 		if msg.err != nil {
-			m.err = msg.err.Error()
+			m.setError(msg.err.Error())
 			return m, nil
 		}
 		m.err = ""
@@ -63,52 +66,52 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, saveCacheCmd(m.cache, cache.Cache{LastSyncAt: m.lastSyncAt, Secrets: m.secrets})
 	case createDoneMsg:
 		if msg.err != nil {
-			m.err = msg.err.Error()
+			m.setError(msg.err.Error())
 			return m, nil
 		}
 		m.err = ""
 		m.status = "Секрет создан"
-		m.screen = screenList
+		m.setScreen(screenList)
 		return m, syncCmd(m.apiClient, m.token, nil)
 	case updateDoneMsg:
 		if msg.err != nil {
-			m.err = msg.err.Error()
+			m.setError(displayError(msg.err))
 			return m, nil
 		}
 		m.err = ""
 		m.status = "Секрет обновлен"
-		m.screen = screenList
+		m.setScreen(screenList)
 		return m, syncCmd(m.apiClient, m.token, nil)
 	case createBlobDoneMsg:
 		if msg.err != nil {
-			m.err = msg.err.Error()
+			m.setError(msg.err.Error())
 			return m, nil
 		}
 		m.err = ""
 		m.status = "Blob-секрет создан"
-		m.screen = screenList
+		m.setScreen(screenList)
 		return m, syncCmd(m.apiClient, m.token, nil)
 	case downloadBlobDoneMsg:
 		if msg.err != nil {
-			m.err = msg.err.Error()
+			m.setError(msg.err.Error())
 			return m, nil
 		}
 		m.err = ""
 		m.status = "Blob сохранен: " + msg.path
-		m.screen = screenView
+		m.setScreen(screenView)
 		return m, nil
 	case updateBlobDoneMsg:
 		if msg.err != nil {
-			m.err = msg.err.Error()
+			m.setError(displayError(msg.err))
 			return m, nil
 		}
 		m.err = ""
 		m.status = "Blob-содержимое заменено"
-		m.screen = screenList
+		m.setScreen(screenList)
 		return m, syncCmd(m.apiClient, m.token, nil)
 	case logoutDoneMsg:
 		if msg.err != nil {
-			m.err = msg.err.Error()
+			m.setError(msg.err.Error())
 			return m, nil
 		}
 		m.err = ""
@@ -118,16 +121,24 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.secrets = nil
 		m.selected = nil
 		refreshSecretsList(&m)
-		m.screen = screenAuth
+		m.setScreen(screenAuth)
 		return m, nil
 	case deleteDoneMsg:
 		if msg.err != nil {
-			m.err = msg.err.Error()
+			if isAPIError(msg.err, http.StatusNotFound, "secret_not_found") {
+				removeSecret(&m, msg.id.String())
+				m.err = ""
+				m.status = "Секрет уже удален"
+				m.setScreen(screenList)
+				return m, syncCmd(m.apiClient, m.token, nil)
+			}
+			m.setError(displayError(msg.err))
 			return m, nil
 		}
 		m.err = ""
 		m.status = "Секрет удален"
-		m.screen = screenList
+		removeSecret(&m, msg.id.String())
+		m.setScreen(screenList)
 		return m, syncCmd(m.apiClient, m.token, nil)
 	}
 	return m.updateCurrent(message)
@@ -135,15 +146,28 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "ctrl+c", "q":
-		if m.screen == screenAuth || m.screen == screenList {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "q":
+		if m.screen == screenList {
+			return m, nil
+		}
+	case "Q":
+		if m.screen == screenList {
 			return m, tea.Quit
 		}
-		m.screen = screenList
-		return m, nil
+		if m.screen == screenView {
+			m.setScreen(screenList)
+			return m, nil
+		}
 	case "esc":
-		m.screen = screenList
-		return m, nil
+		if m.screen == screenList {
+			return m, nil
+		}
+		if m.screen != screenAuth {
+			m.setScreen(screenList)
+			return m, nil
+		}
 	}
 	return m.updateCurrent(msg)
 }
@@ -156,6 +180,10 @@ func (m Model) updateCurrent(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateList(message)
 	case screenView:
 		return m.updateView(message)
+	case screenConfirmDelete:
+		return m.updateConfirmDelete(message)
+	case screenConfirmLogout:
+		return m.updateConfirmLogout(message)
 	case screenCreate:
 		return m.updateCreate(message)
 	case screenUpdate:
@@ -173,32 +201,23 @@ func (m Model) updateCurrent(message tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) updateAuth(message tea.Msg) (tea.Model, tea.Cmd) {
 	if msg, ok := message.(tea.KeyMsg); ok {
 		switch msg.String() {
-		case "tab", "shift+tab":
+		case "tab":
 			m.authInputs[m.authFocus].Blur()
-			if msg.String() == "shift+tab" {
-				m.authFocus--
-				if m.authFocus < 0 {
-					m.authFocus = authFieldMode
-				}
-			} else {
-				m.authFocus++
-				if m.authFocus > authFieldMode {
-					m.authFocus = 0
-				}
+			m.authFocus++
+			if m.authFocus > authFieldPassword {
+				m.authFocus = authFieldLogin
 			}
 			m.authInputs[m.authFocus].Focus()
 			return m, nil
-		case " ":
-			if m.authFocus == authFieldMode {
-				m.register = !m.register
-				return m, nil
-			}
+		case "shift+tab":
+			m.register = !m.register
+			return m, nil
 		case "enter":
 			return m, authCmd(m.apiClient, m.authInputs[0].Value(), m.authInputs[1].Value(), m.register)
 		}
 	}
 	var cmd tea.Cmd
-	m.authInputs[m.authFocus], cmd = m.authInputs[m.authFocus].Update(message)
+	m.authInputs[m.authFocus], cmd = updateInput(m.authInputs[m.authFocus], message)
 	return m, cmd
 }
 
@@ -209,20 +228,24 @@ func (m Model) updateList(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, syncCmd(m.apiClient, m.token, m.lastSyncAt)
 		case "a":
 			resetCreate(&m)
-			m.screen = screenCreate
+			m.setScreen(screenCreate)
 			return m, nil
 		case "b":
 			resetCreateBlob(&m)
-			m.screen = screenCreateBlob
+			m.setScreen(screenCreateBlob)
 			return m, nil
 		case "d":
 			selected, ok := m.selectedListItem()
 			if !ok {
 				return m, nil
 			}
-			return m, deleteCmd(m.apiClient, m.token, selected.secret.ID)
+			secret := selected.secret
+			m.selected = &secret
+			m.setScreen(screenConfirmDelete)
+			return m, nil
 		case "l":
-			return m, logoutCmd(m.store, m.cache)
+			m.setScreen(screenConfirmLogout)
+			return m, nil
 		case "enter":
 			selected, ok := m.selectedListItem()
 			if !ok {
@@ -230,7 +253,7 @@ func (m Model) updateList(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			secret := selected.secret
 			m.selected = &secret
-			m.screen = screenView
+			m.setScreen(screenView)
 			return m, nil
 		}
 	}
@@ -239,32 +262,62 @@ func (m Model) updateList(message tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m Model) updateConfirmDelete(message tea.Msg) (tea.Model, tea.Cmd) {
+	if msg, ok := message.(tea.KeyMsg); ok {
+		switch msg.String() {
+		case "y", "Y":
+			if m.selected == nil {
+				m.setScreen(screenList)
+				return m, nil
+			}
+			return m, deleteCmd(m.apiClient, m.token, m.selected.ID)
+		case "n", "N", "esc":
+			m.setScreen(screenList)
+			return m, nil
+		}
+	}
+	return m, nil
+}
+
+func (m Model) updateConfirmLogout(message tea.Msg) (tea.Model, tea.Cmd) {
+	if msg, ok := message.(tea.KeyMsg); ok {
+		switch msg.String() {
+		case "y", "Y":
+			return m, logoutCmd(m.store, m.cache)
+		case "n", "N", "esc":
+			m.setScreen(screenList)
+			return m, nil
+		}
+	}
+	return m, nil
+}
+
 func (m Model) updateView(message tea.Msg) (tea.Model, tea.Cmd) {
 	if msg, ok := message.(tea.KeyMsg); ok {
 		switch msg.String() {
 		case "e":
 			if m.selected == nil || m.selected.Payload == nil {
-				m.err = "выбранный секрет не является structured"
+				m.setError("выбранный секрет не является structured")
 				return m, nil
 			}
 			resetUpdate(&m)
-			m.screen = screenUpdate
+			m.setScreen(screenUpdate)
 			return m, nil
 		case "s":
 			if m.selected == nil || m.selected.Blob == nil {
-				m.err = "выбранный секрет не является blob"
+				m.setError("выбранный секрет не является blob")
 				return m, nil
 			}
 			resetDownloadBlob(&m)
-			m.screen = screenDownloadBlob
+			m.setScreen(screenDownloadBlob)
 			return m, nil
 		case "p":
 			if m.selected == nil || m.selected.Blob == nil {
-				m.err = "выбранный секрет не является blob"
+				m.setError("выбранный секрет не является blob")
 				return m, nil
 			}
 			resetUpdateBlob(&m)
-			m.screen = screenUpdateBlob
+			m.setScreen(screenUpdateBlob)
 			return m, nil
 		}
 	}
@@ -274,118 +327,91 @@ func (m Model) updateView(message tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) updateCreate(message tea.Msg) (tea.Model, tea.Cmd) {
 	if msg, ok := message.(tea.KeyMsg); ok {
 		switch msg.String() {
-		case "tab", "shift+tab":
-			m.createInputs[m.createFocus].Blur()
-			if msg.String() == "shift+tab" {
-				m.createFocus--
-				if m.createFocus < 0 {
-					m.createFocus = len(m.createInputs) - 1
-				}
-			} else {
-				m.createFocus++
-				if m.createFocus >= len(m.createInputs) {
-					m.createFocus = 0
-				}
-			}
-			m.createInputs[m.createFocus].Focus()
+		case "tab":
+			moveStructuredFocus(m.createInputs, &m.createFocus, false)
+			return m, nil
+		case "shift+tab":
+			toggleStructuredType(m.createInputs, &m.createFocus)
 			return m, nil
 		case "enter":
 			input, err := m.createSecretInput()
 			if err != nil {
-				m.err = err.Error()
+				m.setError(err.Error())
 				return m, nil
 			}
 			return m, createCmd(m.apiClient, m.token, input)
 		}
 	}
 	var cmd tea.Cmd
-	m.createInputs[m.createFocus], cmd = m.createInputs[m.createFocus].Update(message)
+	m.createInputs[m.createFocus], cmd = updateInput(m.createInputs[m.createFocus], message)
 	return m, cmd
 }
 
 func (m Model) updateUpdate(message tea.Msg) (tea.Model, tea.Cmd) {
 	if msg, ok := message.(tea.KeyMsg); ok {
 		switch msg.String() {
-		case "tab", "shift+tab":
-			m.updateInputs[m.updateFocus].Blur()
-			if msg.String() == "shift+tab" {
-				m.updateFocus--
-				if m.updateFocus < 0 {
-					m.updateFocus = len(m.updateInputs) - 1
-				}
-			} else {
-				m.updateFocus++
-				if m.updateFocus >= len(m.updateInputs) {
-					m.updateFocus = 0
-				}
-			}
-			m.updateInputs[m.updateFocus].Focus()
+		case "tab":
+			moveStructuredFocus(m.updateInputs, &m.updateFocus, false)
+			return m, nil
+		case "shift+tab":
+			toggleStructuredType(m.updateInputs, &m.updateFocus)
 			return m, nil
 		case "enter":
 			if m.selected == nil || m.selected.Payload == nil {
-				m.err = "выбранный секрет не является structured"
+				m.setError("выбранный секрет не является structured")
 				return m, nil
 			}
 			input, err := m.updateSecretInput()
 			if err != nil {
-				m.err = err.Error()
+				m.setError(err.Error())
 				return m, nil
 			}
 			return m, updateCmd(m.apiClient, m.token, m.selected.ID, input)
 		}
 	}
 	var cmd tea.Cmd
-	m.updateInputs[m.updateFocus], cmd = m.updateInputs[m.updateFocus].Update(message)
+	m.updateInputs[m.updateFocus], cmd = updateInput(m.updateInputs[m.updateFocus], message)
 	return m, cmd
 }
 
 func (m Model) updateCreateBlob(message tea.Msg) (tea.Model, tea.Cmd) {
 	if msg, ok := message.(tea.KeyMsg); ok {
 		switch msg.String() {
-		case "tab", "shift+tab":
-			m.blobInputs[m.blobFocus].Blur()
-			if msg.String() == "shift+tab" {
-				m.blobFocus--
-				if m.blobFocus < 0 {
-					m.blobFocus = len(m.blobInputs) - 1
-				}
-			} else {
-				m.blobFocus++
-				if m.blobFocus >= len(m.blobInputs) {
-					m.blobFocus = 0
-				}
-			}
-			m.blobInputs[m.blobFocus].Focus()
+		case "tab":
+			moveBlobFocus(m.blobInputs, &m.blobFocus)
+			return m, nil
+		case "shift+tab":
+			toggleBlobType(m.blobInputs)
 			return m, nil
 		case "enter":
-			input, close, err := m.blobSecretInput()
+			input, closeFile, err := m.blobSecretInput()
 			if err != nil {
-				m.err = err.Error()
+				m.setError(err.Error())
 				return m, nil
 			}
-			return m, createBlobCmd(m.apiClient, m.token, input, close)
+			return m, createBlobCmd(m.apiClient, m.token, input, closeFile)
 		}
 	}
 	var cmd tea.Cmd
-	m.blobInputs[m.blobFocus], cmd = m.blobInputs[m.blobFocus].Update(message)
+	m.blobInputs[m.blobFocus], cmd = updateInput(m.blobInputs[m.blobFocus], message)
 	return m, cmd
 }
 
 func (m Model) updateDownloadBlob(message tea.Msg) (tea.Model, tea.Cmd) {
 	if msg, ok := message.(tea.KeyMsg); ok && msg.String() == "enter" {
 		if m.selected == nil || m.selected.Blob == nil {
-			m.err = "выбранный секрет не является blob"
+			m.setError("выбранный секрет не является blob")
 			return m, nil
 		}
 		path, file, err := m.downloadBlobOutput()
 		if err != nil {
-			m.err = err.Error()
+			m.setError(err.Error())
 			return m, nil
 		}
 		return m, downloadBlobCmd(m.apiClient, m.token, m.selected.ID, path, file.Close, file)
 	}
 	var cmd tea.Cmd
-	m.downloadInputs[m.downloadFocus], cmd = m.downloadInputs[m.downloadFocus].Update(message)
+	m.downloadInputs[m.downloadFocus], cmd = updateInput(m.downloadInputs[m.downloadFocus], message)
 	return m, cmd
 }
 
@@ -409,19 +435,51 @@ func (m Model) updateUpdateBlob(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "enter":
 			if m.selected == nil || m.selected.Blob == nil {
-				m.err = "выбранный секрет не является blob"
+				m.setError("выбранный секрет не является blob")
 				return m, nil
 			}
-			input, close, err := m.updateBlobInput()
+			input, closeFile, err := m.updateBlobInput()
 			if err != nil {
-				m.err = err.Error()
+				m.setError(err.Error())
 				return m, nil
 			}
 			input.ExpectedVersion = m.selected.Version
-			return m, updateBlobCmd(m.apiClient, m.token, m.selected.ID, input, close)
+			return m, updateBlobCmd(m.apiClient, m.token, m.selected.ID, input, closeFile)
 		}
 	}
 	var cmd tea.Cmd
-	m.updateBlobInputs[m.updateBlobFocus], cmd = m.updateBlobInputs[m.updateBlobFocus].Update(message)
+	m.updateBlobInputs[m.updateBlobFocus], cmd = updateInput(m.updateBlobInputs[m.updateBlobFocus], message)
 	return m, cmd
+}
+
+func displayError(err error) string {
+	var apiError api.APIError
+	if errors.As(err, &apiError) && apiError.StatusCode == http.StatusConflict {
+		return "секрет изменился на сервере, нажми r и повтори"
+	}
+	return err.Error()
+}
+
+func isAPIError(err error, statusCode int, code string) bool {
+	var apiError api.APIError
+	return errors.As(err, &apiError) && apiError.StatusCode == statusCode && apiError.Code == code
+}
+
+func (m *Model) setError(message string) {
+	m.err = message
+	m.status = ""
+}
+
+func (m *Model) setScreen(next screen) {
+	if m.screen != next {
+		m.err = ""
+	}
+	m.screen = next
+}
+
+func updateInput(input textinput.Model, message tea.Msg) (textinput.Model, tea.Cmd) {
+	if msg, ok := message.(tea.KeyMsg); ok && msg.String() == " " {
+		message = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}}
+	}
+	return input.Update(message)
 }

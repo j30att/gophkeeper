@@ -1,5 +1,5 @@
 .PHONY: all
-all: fmt test build-server build-cleanup build-client
+all: generate-api fmt lint test build-all
 
 BINARY_SERVER=gophkeeper-server
 BINARY_CLEANUP=gophkeeper-cleanup
@@ -12,7 +12,15 @@ GENERATED_DIR = $(shell pwd)/pkg/api/generated
 
 .PHONY: fmt
 fmt:
-	gofmt -w ./cmd ./internal
+	gofmt -w ./cmd ./internal ./tools
+
+.PHONY: lint
+lint: lint-docs
+	go vet ./...
+
+.PHONY: lint-docs
+lint-docs:
+	go run ./tools/doccheck ./api ./cmd ./internal
 
 .PHONY: test
 test:
@@ -31,6 +39,18 @@ build-cleanup:
 .PHONY: build-client
 build-client:
 	go build -race $(LDFLAGS) -o bin/$(BINARY_CLIENT) ./cmd/$(BINARY_CLIENT)
+
+.PHONY: build-client-all
+build-client-all:
+	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build $(LDFLAGS) -o bin/$(BINARY_CLIENT)-darwin-amd64 ./cmd/$(BINARY_CLIENT)
+	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build $(LDFLAGS) -o bin/$(BINARY_CLIENT)-darwin-arm64 ./cmd/$(BINARY_CLIENT)
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build $(LDFLAGS) -o bin/$(BINARY_CLIENT)-linux-amd64 ./cmd/$(BINARY_CLIENT)
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build $(LDFLAGS) -o bin/$(BINARY_CLIENT)-linux-arm64 ./cmd/$(BINARY_CLIENT)
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build $(LDFLAGS) -o bin/$(BINARY_CLIENT)-windows-amd64.exe ./cmd/$(BINARY_CLIENT)
+	GOOS=windows GOARCH=arm64 CGO_ENABLED=0 go build $(LDFLAGS) -o bin/$(BINARY_CLIENT)-windows-arm64.exe ./cmd/$(BINARY_CLIENT)
+
+.PHONY: build-all
+build-all: build-server build-cleanup build-client build-client-all
 
 .PHONY: run-server-dev
 run-server-dev:
