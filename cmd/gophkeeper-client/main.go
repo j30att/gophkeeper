@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	clientapi "github.com/igor/gophkeeper/internal/clientapp/api"
+	"github.com/igor/gophkeeper/internal/clientapp/cache"
 	clientconfig "github.com/igor/gophkeeper/internal/clientapp/config"
 	"github.com/igor/gophkeeper/internal/clientapp/session"
 	"github.com/igor/gophkeeper/internal/clientapp/tui"
@@ -50,8 +51,13 @@ func main() {
 		_, _ = fmt.Fprintf(os.Stderr, "create session store: %v\n", err)
 		os.Exit(1)
 	}
+	cacheStore, err := cache.NewStore(cfg.SecretsPath)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "create cache store: %v\n", err)
+		os.Exit(1)
+	}
 
-	program := tea.NewProgram(tui.New(apiClient, sessionStore), tea.WithAltScreen())
+	program := tea.NewProgram(tui.New(apiClient, sessionStore, cacheStore), tea.WithAltScreen())
 	if _, err = program.Run(); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "run tui: %v\n", err)
 		os.Exit(1)

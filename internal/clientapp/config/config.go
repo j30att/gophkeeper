@@ -14,6 +14,7 @@ const defaultServerURL = "http://127.0.0.1:8080"
 type Config struct {
 	ServerURL   string
 	SessionPath string
+	SecretsPath string
 }
 
 // Load загружает конфигурацию клиента из flags и environment variables.
@@ -32,5 +33,6 @@ func Load(serverURL string) (Config, error) {
 	return Config{
 		ServerURL:   strings.TrimRight(serverURL, "/"),
 		SessionPath: filepath.Join(homeDir, ".gophkeeper", "session.json"),
+		SecretsPath: filepath.Join(homeDir, ".gophkeeper", "secrets.json"),
 	}, nil
 }

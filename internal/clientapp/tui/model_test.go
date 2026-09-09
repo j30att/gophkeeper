@@ -3,6 +3,9 @@ package tui
 import (
 	"context"
 	"errors"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -13,12 +16,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/igor/gophkeeper/internal/clientapp/api"
+	"github.com/igor/gophkeeper/internal/clientapp/cache"
 	"github.com/igor/gophkeeper/internal/clientapp/session"
 )
 
 type apiClientMock struct {
 	token       string
 	syncOutput  api.SyncResponse
+	syncSince   *time.Time
 	created     api.Secret
 	err         error
 	registered  bool
@@ -26,6 +31,10 @@ type apiClientMock struct {
 	password    string
 	deletedID   uuid.UUID
 	secretInput api.SecretInput
+	blobInput   api.BlobSecretInput
+	blobContent api.BlobContentInput
+	blobData    string
+	downloaded  strings.Builder
 }
 
 func (m *apiClientMock) Register(_ context.Context, login string, password string) (string, error) {
@@ -41,12 +50,44 @@ func (m *apiClientMock) Login(_ context.Context, login string, password string) 
 	return m.token, m.err
 }
 
-func (m *apiClientMock) Sync(_ context.Context, _ string, _ *time.Time) (api.SyncResponse, error) {
+func (m *apiClientMock) Sync(_ context.Context, _ string, since *time.Time) (api.SyncResponse, error) {
+	m.syncSince = since
 	return m.syncOutput, m.err
 }
 
 func (m *apiClientMock) CreateSecret(_ context.Context, _ string, input api.SecretInput) (api.Secret, error) {
 	m.secretInput = input
+	return m.created, m.err
+}
+
+func (m *apiClientMock) UpdateSecret(_ context.Context, _ string, _ uuid.UUID, input api.SecretInput) (api.Secret, error) {
+	m.secretInput = input
+	return m.created, m.err
+}
+
+func (m *apiClientMock) CreateBlobSecret(_ context.Context, _ string, input api.BlobSecretInput) (api.Secret, error) {
+	m.blobInput = input
+	if input.Content != nil {
+		content, _ := io.ReadAll(input.Content)
+		m.blobData = string(content)
+	}
+	return m.created, m.err
+}
+
+func (m *apiClientMock) DownloadBlobContent(_ context.Context, _ string, _ uuid.UUID, writer io.Writer) error {
+	if m.err != nil {
+		return m.err
+	}
+	_, err := io.WriteString(writer, "downloaded")
+	return err
+}
+
+func (m *apiClientMock) UpdateBlobContent(_ context.Context, _ string, _ uuid.UUID, input api.BlobContentInput) (api.Secret, error) {
+	m.blobContent = input
+	if input.Content != nil {
+		content, _ := io.ReadAll(input.Content)
+		m.blobData = string(content)
+	}
 	return m.created, m.err
 }
 
@@ -68,6 +109,35 @@ func (m *sessionStoreMock) Save(session session.Session) error {
 
 func (m *sessionStoreMock) Load() (session.Session, error) {
 	return m.session, m.err
+}
+
+func (m *sessionStoreMock) Delete() error {
+	m.session = session.Session{}
+	m.saved = session.Session{}
+	return m.err
+}
+
+type cacheStoreMock struct {
+	cache   cache.Cache
+	err     error
+	saved   cache.Cache
+	deleted bool
+}
+
+func (m *cacheStoreMock) Save(cache cache.Cache) error {
+	m.saved = cache
+	return m.err
+}
+
+func (m *cacheStoreMock) Load() (cache.Cache, error) {
+	return m.cache, m.err
+}
+
+func (m *cacheStoreMock) Delete() error {
+	m.deleted = true
+	m.cache = cache.Cache{}
+	m.saved = cache.Cache{}
+	return m.err
 }
 
 func key(message string) tea.KeyMsg {
@@ -109,6 +179,37 @@ func TestModel(t *testing.T) {
 		assert.Equal(t, "jwt", next.token)
 		assert.Equal(t, screenList, next.screen)
 		assert.NotNil(t, cmd)
+	})
+
+	t.Run("Должен загрузить локальный cache перед sync", func(t *testing.T) {
+		now := time.Date(2026, 9, 9, 1, 2, 3, 0, time.UTC)
+		secretID := uuid.New()
+		apiClient := &apiClientMock{}
+		model := New(
+			apiClient,
+			&sessionStoreMock{session: session.Session{Token: "jwt"}},
+			&cacheStoreMock{
+				cache: cache.Cache{
+					LastSyncAt: &now,
+					Secrets: []api.Secret{
+						{ID: secretID, Name: "github", Type: api.SecretTypeCredentials, UpdatedAt: now},
+					},
+				},
+			},
+		)
+
+		updated, cmd := model.Update(model.Init()())
+		next := updated.(Model)
+		require.NotNil(t, cmd)
+		updated, cmd = next.Update(cmd())
+		next = updated.(Model)
+		require.NotNil(t, cmd)
+		_ = cmd()
+
+		require.Len(t, next.secrets, 1)
+		assert.Equal(t, secretID, next.secrets[0].ID)
+		require.NotNil(t, apiClient.syncSince)
+		assert.Equal(t, now, *apiClient.syncSince)
 	})
 
 	t.Run("Должен игнорировать ошибку загрузки session", func(t *testing.T) {
@@ -180,6 +281,43 @@ func TestModel(t *testing.T) {
 		assert.Equal(t, "github", selected.Title())
 	})
 
+	t.Run("Должен сохранить cache после sync", func(t *testing.T) {
+		secretID := uuid.New()
+		now := time.Date(2026, 9, 9, 1, 2, 3, 0, time.UTC)
+		cacheStore := &cacheStoreMock{}
+		model := New(&apiClientMock{}, &sessionStoreMock{}, cacheStore)
+
+		updated, cmd := model.Update(syncDoneMsg{
+			response: api.SyncResponse{
+				ServerTime: now,
+				Secrets: []api.Secret{
+					{ID: secretID, Name: "github", Type: api.SecretTypeCredentials, UpdatedAt: now},
+				},
+			},
+		})
+		next := updated.(Model)
+		require.NotNil(t, cmd)
+		done := cmd().(cacheSavedMsg)
+		updated, _ = next.Update(done)
+		next = updated.(Model)
+
+		require.NoError(t, done.err)
+		require.Len(t, cacheStore.saved.Secrets, 1)
+		assert.Equal(t, secretID, cacheStore.saved.Secrets[0].ID)
+		require.NotNil(t, cacheStore.saved.LastSyncAt)
+		assert.Equal(t, now, *cacheStore.saved.LastSyncAt)
+		assert.Empty(t, next.err)
+	})
+
+	t.Run("Должен показать ошибку сохранения cache", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+
+		updated, _ := model.Update(cacheSavedMsg{err: errors.New("cache save failed")})
+		next := updated.(Model)
+
+		assert.Contains(t, next.View(), "cache save failed")
+	})
+
 	t.Run("Должен обработать createDoneMsg", func(t *testing.T) {
 		model := New(&apiClientMock{}, &sessionStoreMock{})
 		model.token = "jwt"
@@ -201,6 +339,29 @@ func TestModel(t *testing.T) {
 
 		assert.Nil(t, cmd)
 		assert.Contains(t, next.View(), "create failed")
+	})
+
+	t.Run("Должен обработать updateDoneMsg", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.token = "jwt"
+		model.screen = screenUpdate
+
+		updated, cmd := model.Update(updateDoneMsg{})
+		next := updated.(Model)
+
+		assert.Equal(t, screenList, next.screen)
+		assert.Equal(t, "Секрет обновлен", next.status)
+		assert.NotNil(t, cmd)
+	})
+
+	t.Run("Должен показать ошибку обновления", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+
+		updated, cmd := model.Update(updateDoneMsg{err: errors.New("update failed")})
+		next := updated.(Model)
+
+		assert.Nil(t, cmd)
+		assert.Contains(t, next.View(), "update failed")
 	})
 
 	t.Run("Должен обработать deleteDoneMsg", func(t *testing.T) {
@@ -236,7 +397,7 @@ func TestModel(t *testing.T) {
 		}
 		model := New(&apiClientMock{}, &sessionStoreMock{})
 		model.screen = screenList
-		model.applySync(api.SyncResponse{Secrets: []api.Secret{secret}})
+		applySync(&model, api.SyncResponse{Secrets: []api.Secret{secret}})
 
 		updated, _ := model.Update(key("enter"))
 		next := updated.(Model)
@@ -318,6 +479,18 @@ func TestModel(t *testing.T) {
 		assert.Contains(t, next.View(), "Создать structured secret")
 	})
 
+	t.Run("Должен открыть форму создания blob из списка", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.screen = screenList
+
+		updated, cmd := model.Update(key("b"))
+		next := updated.(Model)
+
+		assert.Nil(t, cmd)
+		assert.Equal(t, screenCreateBlob, next.screen)
+		assert.Contains(t, next.View(), "Создать blob secret")
+	})
+
 	t.Run("Должен вернуть sync command из списка", func(t *testing.T) {
 		model := New(&apiClientMock{}, &sessionStoreMock{})
 		model.screen = screenList
@@ -344,11 +517,63 @@ func TestModel(t *testing.T) {
 		secretID := uuid.New()
 		model := New(&apiClientMock{}, &sessionStoreMock{})
 		model.screen = screenList
-		model.applySync(api.SyncResponse{Secrets: []api.Secret{{ID: secretID, Name: "github"}}})
+		applySync(&model, api.SyncResponse{Secrets: []api.Secret{{ID: secretID, Name: "github"}}})
 
 		_, cmd := model.Update(key("d"))
 
 		assert.NotNil(t, cmd)
+	})
+
+	t.Run("Должен вернуть logout command из списка", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{}, &cacheStoreMock{})
+		model.screen = screenList
+
+		_, cmd := model.Update(key("l"))
+
+		assert.NotNil(t, cmd)
+	})
+
+	t.Run("Должен выполнить logout command", func(t *testing.T) {
+		sessionStore := &sessionStoreMock{session: session.Session{Token: "jwt"}}
+		cacheStore := &cacheStoreMock{cache: cache.Cache{Secrets: []api.Secret{{ID: uuid.New(), Name: "github"}}}}
+
+		message := logoutCmd(sessionStore, cacheStore)()
+
+		done := message.(logoutDoneMsg)
+		require.NoError(t, done.err)
+		assert.True(t, cacheStore.deleted)
+		assert.Empty(t, sessionStore.session.Token)
+	})
+
+	t.Run("Должен обработать logoutDoneMsg", func(t *testing.T) {
+		now := time.Now().UTC()
+		model := New(&apiClientMock{}, &sessionStoreMock{}, &cacheStoreMock{})
+		model.token = "jwt"
+		model.screen = screenList
+		model.lastSyncAt = &now
+		model.selected = &api.Secret{ID: uuid.New(), Name: "github"}
+		applySync(&model, api.SyncResponse{Secrets: []api.Secret{*model.selected}})
+
+		updated, cmd := model.Update(logoutDoneMsg{})
+		next := updated.(Model)
+
+		assert.Nil(t, cmd)
+		assert.Equal(t, screenAuth, next.screen)
+		assert.Empty(t, next.token)
+		assert.Nil(t, next.lastSyncAt)
+		assert.Nil(t, next.selected)
+		assert.Empty(t, next.secrets)
+		assert.Equal(t, "Выход выполнен", next.status)
+	})
+
+	t.Run("Должен показать ошибку logout", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+
+		updated, cmd := model.Update(logoutDoneMsg{err: errors.New("logout failed")})
+		next := updated.(Model)
+
+		assert.Nil(t, cmd)
+		assert.Contains(t, next.View(), "logout failed")
 	})
 
 	t.Run("Должен переключать create focus", func(t *testing.T) {
@@ -387,6 +612,253 @@ func TestModel(t *testing.T) {
 
 		assert.Nil(t, cmd)
 		assert.Contains(t, next.View(), "type должен быть credentials или card")
+	})
+
+	t.Run("Должен переключать update focus", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.screen = screenUpdate
+
+		updated, _ := model.Update(key("tab"))
+		next := updated.(Model)
+
+		assert.Equal(t, createFieldName, next.updateFocus)
+
+		updated, _ = next.Update(key("shift+tab"))
+		next = updated.(Model)
+
+		assert.Equal(t, createFieldType, next.updateFocus)
+	})
+
+	t.Run("Должен вернуть update command по enter", func(t *testing.T) {
+		secretID := uuid.New()
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.screen = screenUpdate
+		model.selected = &api.Secret{
+			ID:      secretID,
+			Type:    api.SecretTypeCredentials,
+			Payload: map[string]interface{}{"login": "old"},
+			Version: 2,
+		}
+		model.updateInputs[createFieldType].SetValue("credentials")
+		model.updateInputs[createFieldName].SetValue("github")
+		model.updateInputs[createFieldFirst].SetValue("igor")
+
+		_, cmd := model.Update(key("enter"))
+
+		assert.NotNil(t, cmd)
+	})
+
+	t.Run("Должен показать update validation error по enter", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.screen = screenUpdate
+		model.selected = &api.Secret{ID: uuid.New(), Payload: map[string]interface{}{"login": "igor"}}
+		model.updateInputs[createFieldType].SetValue("binary")
+
+		updated, cmd := model.Update(key("enter"))
+		next := updated.(Model)
+
+		assert.Nil(t, cmd)
+		assert.Contains(t, next.View(), "type должен быть credentials или card")
+	})
+
+	t.Run("Должен открыть download screen для blob", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.screen = screenView
+		model.selected = &api.Secret{ID: uuid.New(), Blob: &api.Blob{OriginalName: "doc.txt"}}
+
+		updated, cmd := model.Update(key("s"))
+		next := updated.(Model)
+
+		assert.Nil(t, cmd)
+		assert.Equal(t, screenDownloadBlob, next.screen)
+		assert.Contains(t, next.View(), "doc.txt")
+	})
+
+	t.Run("Должен открыть update screen для structured", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.screen = screenView
+		model.selected = &api.Secret{
+			ID:       uuid.New(),
+			Name:     "github",
+			Type:     api.SecretTypeCredentials,
+			Metadata: map[string]interface{}{"site": "github"},
+			Payload:  map[string]interface{}{"login": "igor", "password": "secret"},
+			Version:  2,
+		}
+
+		updated, cmd := model.Update(key("e"))
+		next := updated.(Model)
+
+		assert.Nil(t, cmd)
+		assert.Equal(t, screenUpdate, next.screen)
+		assert.Contains(t, next.View(), "expected_version: 2")
+		assert.Equal(t, "github", next.updateInputs[createFieldName].Value())
+		assert.Equal(t, "igor", next.updateInputs[createFieldFirst].Value())
+	})
+
+	t.Run("Должен показать ошибку update для blob", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.screen = screenView
+		model.selected = &api.Secret{ID: uuid.New(), Blob: &api.Blob{OriginalName: "doc.txt"}}
+
+		updated, cmd := model.Update(key("e"))
+		next := updated.(Model)
+
+		assert.Nil(t, cmd)
+		assert.Contains(t, next.View(), "выбранный секрет не является structured")
+	})
+
+	t.Run("Должен открыть update blob screen для blob", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.screen = screenView
+		model.selected = &api.Secret{ID: uuid.New(), Version: 2, Blob: &api.Blob{OriginalName: "doc.txt"}}
+
+		updated, cmd := model.Update(key("p"))
+		next := updated.(Model)
+
+		assert.Nil(t, cmd)
+		assert.Equal(t, screenUpdateBlob, next.screen)
+		assert.Contains(t, next.View(), "expected_version: 2")
+	})
+
+	t.Run("Должен показать ошибку download для structured", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.screen = screenView
+		model.selected = &api.Secret{ID: uuid.New()}
+
+		updated, cmd := model.Update(key("s"))
+		next := updated.(Model)
+
+		assert.Nil(t, cmd)
+		assert.Contains(t, next.View(), "выбранный секрет не является blob")
+	})
+
+	t.Run("Должен собрать blob input", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "note.txt")
+		require.NoError(t, os.WriteFile(path, []byte("content"), 0o600))
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.blobInputs[blobFieldType].SetValue("text")
+		model.blobInputs[blobFieldName].SetValue("book")
+		model.blobInputs[blobFieldMetadata].SetValue(`{"kind":"book"}`)
+		model.blobInputs[blobFieldPath].SetValue(path)
+		model.blobInputs[blobFieldContentType].SetValue("text/plain")
+
+		input, close, err := model.blobSecretInput()
+		require.NoError(t, err)
+		defer close()
+		content, err := io.ReadAll(input.Content)
+
+		require.NoError(t, err)
+		assert.Equal(t, api.SecretTypeText, input.Type)
+		assert.Equal(t, "book", input.Name)
+		assert.Equal(t, "note.txt", input.OriginalName)
+		assert.Equal(t, "text/plain", input.ContentType)
+		assert.Equal(t, "content", string(content))
+	})
+
+	t.Run("Должен вернуть ошибку blob input без файла", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.blobInputs[blobFieldType].SetValue("binary")
+
+		_, _, err := model.blobSecretInput()
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "file path")
+	})
+
+	t.Run("Должен вернуть create blob command", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "note.txt")
+		require.NoError(t, os.WriteFile(path, []byte("content"), 0o600))
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.screen = screenCreateBlob
+		model.blobInputs[blobFieldType].SetValue("text")
+		model.blobInputs[blobFieldPath].SetValue(path)
+
+		_, cmd := model.Update(key("enter"))
+
+		assert.NotNil(t, cmd)
+	})
+
+	t.Run("Должен выполнить create blob command", func(t *testing.T) {
+		client := &apiClientMock{}
+		message := createBlobCmd(
+			client,
+			"jwt",
+			api.BlobSecretInput{Content: strings.NewReader("content"), OriginalName: "note.txt"},
+			nil,
+		)()
+
+		done := message.(createBlobDoneMsg)
+		require.NoError(t, done.err)
+		assert.Equal(t, "content", client.blobData)
+	})
+
+	t.Run("Должен собрать update credentials input с expected version", func(t *testing.T) {
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.selected = &api.Secret{Version: 4}
+		model.updateInputs[createFieldType].SetValue("credentials")
+		model.updateInputs[createFieldName].SetValue("github")
+		model.updateInputs[createFieldMetadata].SetValue(`{"site":"github"}`)
+		model.updateInputs[createFieldFirst].SetValue("igor")
+		model.updateInputs[createFieldSecond].SetValue("new")
+
+		input, err := model.updateSecretInput()
+
+		require.NoError(t, err)
+		assert.Equal(t, api.SecretTypeCredentials, input.Type)
+		assert.Equal(t, "github", input.Name)
+		assert.Equal(t, "igor", input.Payload["login"])
+		assert.Equal(t, 4, input.ExpectedVersion)
+	})
+
+	t.Run("Должен скачать blob в файл", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "out.txt")
+		model := New(&apiClientMock{}, &sessionStoreMock{})
+		model.screen = screenDownloadBlob
+		model.selected = &api.Secret{ID: uuid.New(), Blob: &api.Blob{OriginalName: "doc.txt"}}
+		model.downloadInputs[downloadFieldPath].SetValue(path)
+
+		updated, cmd := model.Update(key("enter"))
+		next := updated.(Model)
+		require.NotNil(t, cmd)
+		done := cmd().(downloadBlobDoneMsg)
+		updated, _ = next.Update(done)
+		next = updated.(Model)
+		content, err := os.ReadFile(path)
+
+		require.NoError(t, err)
+		assert.Equal(t, "downloaded", string(content))
+		assert.Contains(t, next.status, path)
+	})
+
+	t.Run("Должен выполнить update blob command", func(t *testing.T) {
+		client := &apiClientMock{}
+		message := updateBlobCmd(
+			client,
+			"jwt",
+			uuid.New(),
+			api.BlobContentInput{ExpectedVersion: 2, Content: strings.NewReader("new")},
+			nil,
+		)()
+
+		done := message.(updateBlobDoneMsg)
+		require.NoError(t, done.err)
+		assert.Equal(t, "new", client.blobData)
+		assert.Equal(t, 2, client.blobContent.ExpectedVersion)
+	})
+
+	t.Run("Должен выполнить update command", func(t *testing.T) {
+		client := &apiClientMock{}
+
+		message := updateCmd(client, "jwt", uuid.New(), api.SecretInput{Name: "github", ExpectedVersion: 2})()
+
+		done := message.(updateDoneMsg)
+		require.NoError(t, done.err)
+		assert.Equal(t, "github", client.secretInput.Name)
+		assert.Equal(t, 2, client.secretInput.ExpectedVersion)
 	})
 
 	t.Run("Должен собрать credentials input", func(t *testing.T) {
@@ -538,7 +1010,7 @@ func TestModel(t *testing.T) {
 		model := New(&apiClientMock{}, &sessionStoreMock{})
 		model.createInputs[createFieldName].SetValue("github")
 
-		model.resetCreate()
+		resetCreate(&model)
 
 		assert.Equal(t, "", model.createInputs[createFieldName].Value())
 		assert.True(t, strings.Contains(model.View(), "GophKeeper"))

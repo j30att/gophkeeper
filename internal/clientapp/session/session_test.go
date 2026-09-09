@@ -30,6 +30,24 @@ func TestStore(t *testing.T) {
 		require.ErrorIs(t, err, ErrNotFound)
 	})
 
+	t.Run("Должен удалить session", func(t *testing.T) {
+		store, err := NewStore(filepath.Join(t.TempDir(), "session.json"))
+		require.NoError(t, err)
+		require.NoError(t, store.Save(Session{Token: "token"}))
+
+		require.NoError(t, store.Delete())
+		_, err = store.Load()
+
+		require.ErrorIs(t, err, ErrNotFound)
+	})
+
+	t.Run("Должен игнорировать удаление отсутствующей session", func(t *testing.T) {
+		store, err := NewStore(filepath.Join(t.TempDir(), "session.json"))
+		require.NoError(t, err)
+
+		require.NoError(t, store.Delete())
+	})
+
 	t.Run("Должен вернуть ошибку без path", func(t *testing.T) {
 		_, err := NewStore("")
 

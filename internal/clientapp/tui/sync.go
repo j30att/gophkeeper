@@ -8,7 +8,7 @@ import (
 	"github.com/igor/gophkeeper/internal/clientapp/api"
 )
 
-func (m *Model) applySync(response api.SyncResponse) {
+func applySync(m *Model, response api.SyncResponse) {
 	byID := make(map[string]api.Secret, len(m.secrets))
 	for _, secret := range m.secrets {
 		byID[secret.ID.String()] = secret
@@ -26,6 +26,10 @@ func (m *Model) applySync(response api.SyncResponse) {
 	sort.Slice(m.secrets, func(i int, j int) bool {
 		return m.secrets[i].UpdatedAt.After(m.secrets[j].UpdatedAt)
 	})
+	refreshSecretsList(m)
+}
+
+func refreshSecretsList(m *Model) {
 	items := make([]list.Item, 0, len(m.secrets))
 	for _, secret := range m.secrets {
 		items = append(items, secretListItem{secret: secret})
